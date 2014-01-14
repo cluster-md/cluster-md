@@ -1,0 +1,33 @@
+the process of starting a node
+
+
+1. load_bitmap(bitmap.c)
+
+   1.1 read metedata from disk
+   1.2 get CR of each bitmap.
+       if get CR successfully
+           call bitmap_add_avail_bitmap
+       elif bitmap is occupied by other nodes
+           try to get locking using async method
+   1.3 bast of bitmap lock
+       #FIXME
+   1.4 when to execute load_bitmap
+       #FIXME #TODO
+
+2. raid1d( raid1.c)
+
+   #FIXME when to run raid1d?
+
+   raid1d is responsible to process the handler
+
+   2.1 choose one bitmap from available list
+       up-convert one bitmap lock to EX
+   
+   2.2 check if running nodes are blocking new start-up nodes.
+       #TODO, release and require
+   2.3 if received a message, process the handler.
+
+3. md_do_sync (md.c)
+
+   #TODO
+ 
