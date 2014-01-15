@@ -1707,6 +1707,192 @@ int bitmap_create(struct mddev *mddev)
 	return err;
 }
 
+int exist_in_avail_bitmap(struct mddev *mddev, int num)
+{
+	int i;
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		if (mddev->avail_bitmap[i] == num) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+int bitmap_add_avail_bitmap(struct mddev *mddev, int num)
+{
+	int ret;
+	int i;
+	ret = exist_in_avail_bitmap(mddev, num);
+	if (ret < 0) {
+		for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+			if (mddev->avail_bitmap[i] == -1) {
+				mddev->avail_bitmap[i] = num;
+				return i;
+			}
+		}
+	}
+	return ret;
+}
+
+int exist_in_reclaim_bitmap(struct mddev *mddev, int num)
+{
+	int i;
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		if (mddev->reclaim_bitmap[i] == num) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+int bitmap_add_reclaim_bitmap(struct mddev *mddev, int num)
+{
+	int ret;
+	int i;
+	ret = exist_in_reclaim_bitmap(mddev, num);
+	if (ret < 0) {
+		for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+			if (mddev->reclaim_bitmap[i] == -1) {
+				mddev->reclaim_bitmap[i] = num;
+				return i;
+			}
+		}
+	}
+	return ret;
+}
+struct dlm_lock_resource *find_bitmap_by_node(struct mddev *mddev, int node)
+{
+	int i = 0;
+	struct list_head *pos, *head;
+	struct dlm_lock_resource *res;
+	head = &mddev->dlm_md_bitmap;
+	pos = head->next;
+	while (i < node && pos->next != head) {
+		i++;
+		pos = pos->next;
+	}
+	if (i == node) {
+		res = list_entry(pos, struct dlm_lock_resource, list);
+		return res;
+	}
+	return NULL;
+}
+
+void bitmap_ast(void *arg)
+{
+	struct dlm_lock_resource *res;
+	struct mddev *mddev;
+
+	res = (struct dlm_lock_resource *)arg;
+	mddev = res->mddev;
+	res->finished = 1;
+	/* unlock successfully */
+	if (res->lksb.sb_status == -DLM_EUNLOCK) {
+		wake_up(&res->waiter)
+		return;
+	}
+	/* lock successfully. */
+	if (!res->lksb.sb_status) {
+		if (res->mode == DLM_LOCK_CR) {
+			mutex_lock(&mddev->avail_mutex);
+			bitmap_add_avail_bitmap(mddev, res->inex);
+			mutex_unlock(&mddev->avail_mutex);
+			md_wakeup_thread(mddev->thread);
+		}
+		if (res->mode == DLM_LOCK_EX) {
+			mddev->bitmap->used = res->index;
+		}
+		if (res->mode == DLM_LOCK_PW) {
+			; /* nothing here? */
+		}
+	}
+	wake_up(&res->waiter);
+	return;
+}
+
+void bitmap_bast(void *arg)
+{
+	struct dlm_lock_resource *res;
+	struct mddev *mddev;
+	int index;
+
+	res = (struct dlm_lock_resource *)arg;
+	mddev = res->mddev;
+	res->finished = 2;
+	if (res->mode == DLM_LOCK_CR) {
+		mutex_lock(&mddev->reclaim_mutex);
+		bitmap_add_reclaim_bitmap(mddev, res->index);
+		mutex_unlock(&mddev->reclaim_mutex);
+		mutex_lock(&mddev->avail_mutex);
+		index = exist_in_avail_bitmap(mddev, res->index);
+		if (index >= 0) {
+			mddev->avail_bitmap[index] = -1;
+		}
+		mutex_unlock(&mddev->avail_mutex);
+	}
+	wake_up(&res->waiter);
+	md_wakeup_thread(mddev->thread);
+	return;
+}
+
+void bitmap_sync_ast(void *arg)
+{
+	struct dlm_lock_resource *res;
+	res = (struct dlm_lock_resource *)arg;
+	res->finished = 1;
+	wake_up(&res->waiter);
+}
+
+void bitmap_sync_bast(void *arg)
+{
+	return;
+}
+
+int bitmap_lock_sync(struct dlm_lock_resource *res)
+{
+	struct mddev *mddev;
+	int ret = -EAGAIN;
+	
+	mddev = res->mddev;
+	res->finished = 0;
+	ret = dlm_lock(mddev->md_lockspace, res->mode, &res->lksb,
+			res->flags, res->name, res->namelen, 
+			res->parent_lkid, bitmap_ast, res,
+			bitmap_bast);
+	if (ret) {
+		return ret;
+	}
+	wait_event(&res->waiter, res->finished == 1);
+	return res->lksb.sb_status;
+}
+
+int bitmap_unlock_sync(struct dlm_lock_resource *res)
+{
+	struct mddev *mddev;
+	int ret = -EAGAIN;
+
+	mddev = res->mddev;
+	res->finished = 0;
+	ret = dlm_unlock(mddev->md_lockspace, res->lksb.sb_lkid, res->flags, 
+			&res->lksb, res);
+	if (ret) {
+		return ret;
+	}
+	wait_event(&res->waiter, res->finished == 1);
+	return res->lksb.sb_status;
+}
+
+int bitmap_lock_async(struct dlm_lock_resource *res)
+{
+	struct mddev *mddev,
+	int ret;
+	mddev = res->mddev;
+	ret = dlm_lock(mddev->md_lockspace, res->mode, &res->lksb, res->flags,
+			res->name, res->namelen, res->parent_lkid,
+			bitmap_ast, res, bitmap_bast);
+	return ret;
+}
+
 int bitmap_load(struct mddev *mddev)
 {
 	int err = 0;
