@@ -749,12 +749,12 @@ static inline unsigned long file_page_offset(struct bitmap_storage *store,
  * 0 or page 1
  */
 static inline struct page *filemap_get_page(struct bitmap_storage *store,
-					    unsigned long chunk)
+					    int node, unsigned long chunk)
 {
-	if (file_page_index(store, chunk) >= store->file_pages)
+	if (file_page_index(store, node, chunk) >= store->file_pages)
 		return NULL;
-	return store->filemap[file_page_index(store, chunk)
-			      - file_page_index(store, 0)];
+	return store->filemap[file_page_index(store, node, chunk)
+			      - file_page_index(store, node, 0)];
 }
 
 static int bitmap_storage_alloc(struct bitmap_storage *store,
