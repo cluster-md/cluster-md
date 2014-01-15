@@ -192,6 +192,11 @@ static int write_sb_page(struct bitmap *bitmap, struct page *page, int wait)
 	struct block_device *bdev;
 	struct mddev *mddev = bitmap->mddev;
 	struct bitmap_storage *store = &bitmap->storage;
+	int ret = -EAGAIN;
+
+	ret = md_lock_super(bitmap->mddev, DLM_LOCK_EX);
+	if (ret) 
+		return ret;
 
 	while ((rdev = next_active_rdev(rdev, mddev)) != NULL) {
 		int size = PAGE_SIZE;
@@ -250,9 +255,11 @@ static int write_sb_page(struct bitmap *bitmap, struct page *page, int wait)
 
 	if (wait)
 		md_super_wait(mddev);
+	md_unlock_super(mddev);
 	return 0;
 
  bad_alignment:
+ 	md_unlock_super(mddev);
 	return -EINVAL;
 }
 
