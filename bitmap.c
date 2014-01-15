@@ -732,8 +732,10 @@ static inline unsigned long file_page_index(struct bitmap_storage *store,
 
 /* calculate the (bit) offset of this bit within a page */
 static inline unsigned long file_page_offset(struct bitmap_storage *store,
-					     unsigned long chunk)
+					     int node, unsigned long chunk)
 {
+	chunk += (store->per_node_pages * node) << PAGE_BIT_SHIFT;
+	chunk += PER_NODE_COUNTER << 3;
 	if (store->sb_page)
 		chunk += sizeof(bitmap_super_t) << 3;
 	return chunk & (PAGE_BITS - 1);
