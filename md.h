@@ -23,6 +23,7 @@
 #include <linux/timer.h>
 #include <linux/wait.h>
 #include <linux/workqueue.h>
+#include <linux/dlm.h>
 
 #define MaxSector (~(sector_t)0)
 
@@ -198,6 +199,25 @@ extern int rdev_set_badblocks(struct md_rdev *rdev, sector_t s, int sectors,
 extern int rdev_clear_badblocks(struct md_rdev *rdev, sector_t s, int sectors,
 				int is_new);
 extern void md_ack_all_badblocks(struct badblocks *bb);
+
+struct mddev;
+
+struct dlm_lock_resource {
+	struct list_head list;
+	int state;
+	int index; /* bitmap index for bitmaps. */
+	char finished;
+	wait_queue_head_t waiter;
+	char *name; /* lock name. md uuid + name. */
+	int namelen;
+	int mode;
+	uint32_t flags;
+	struct dlm_lksb lksb;
+	uint32_t parent_lkid;
+	struct mddev *mddev; /* pointing back to mddev. */
+};
+
+#define PER_NODE_COUNTER	(32)
 
 struct mddev {
 	void				*private;
@@ -415,8 +435,31 @@ struct mddev {
 		unsigned long		chunksize;
 		unsigned long		daemon_sleep; /* how many jiffies between updates? */
 		unsigned long		max_write_behind; /* write-behind mode */
+		int 			nodes; /* maximum number of nodes in cluster. */
 		int			external;
 	} bitmap_info;
+
+	/* dlm lock space and resources for clustered raid. */
+	dlm_lockspace_t *dlm_md_lockspace;
+	struct dlm_lock_resource *dlm_md_meta; /* lock for metadata. */
+	struct dlm_lock_resource *dlm_md_resync; /* lock for resync/recovery. */
+
+	/* mutex to protect message resources */
+	struct mutex msg_mutex;
+
+	/* 3 resources for message passing. */
+	struct dlm_lock_resource *dlm_md_message;
+	struct dlm_lock_resource *dlm_md_idle;
+	struct dlm_lock_resource *dlm_md_ack;
+
+	/* linked list for bitmap resources. */
+	struct list_head dlm_md_bitmap;
+	struct mutex avail_mutex;
+	struct mutex reclaim_mutex;
+	int *avail_bitmap;
+	int *reclaim_bitmap;
+	struct mutex *sb_mutex;
+
 
 	atomic_t 			max_corr_read_errors; /* max read retries */
 	struct list_head		all_mddevs;

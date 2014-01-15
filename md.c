@@ -71,6 +71,23 @@ static void md_print_devices(void);
 static DECLARE_WAIT_QUEUE_HEAD(resync_wait);
 static struct workqueue_struct *md_wq;
 static struct workqueue_struct *md_misc_wq;
+/* These two variables are used to synchronize
+ * super block read for cluster-raid. It is 
+ * akwuard since it synchronizes all md super accesses,
+ * but we need synchronization to 
+ * access super block before mddev is 
+ * initialized, it means we cannot uniquely identify 
+ * the raid and construct dlm resource accordingly.
+ */
+static dlm_lockspace_t *md_lockspace;
+/* this lock is never converted
+ * before reading, grab CR on it
+ * release it after reading.
+ * before writint, grab EX on it,
+ * release it after writing.
+ */
+static struct mutex sb_mutex;
+static struct dlm_md_resource *sb_lock;
 
 static int remove_and_add_spares(struct mddev *mddev,
 				 struct md_rdev *this);
@@ -8577,6 +8594,96 @@ err_misc_wq:
 err_wq:
 	return ret;
 }
+
+void sync_ast(void *arg)
+{
+	struct dlm_lock_resource *res;
+	res = (struct dlm_lock_resource *) arg;
+	res->finished = 1;
+	wake_up(&res_waiter);
+}
+
+/* 0 for successful lock.
+ * non-zero for error.
+ */
+int dlm_lock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
+{
+	int ret = 0;
+	res->finished = 0;
+	ret = dlm_lock(ls, res->mode, &res->lksb,
+			res->flags, res->name, res->namelen,
+			res->parent_lkid, sync_ast, res, NULL);
+	if (ret) {
+		return ret;
+	}
+	wait_event(&res->waiter, res->finished == 1);
+	return res->lksb.sb_status;
+}
+
+int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
+{
+	int ret = 0;
+	res->finished = 0;
+	ret = dlm_unlock(ls, res->lksb.sb_lkid, res->flags, &res->lksb, res);
+	if (ret) {
+		return ret;
+	}
+	wait_event(&res->waiter, res->finished == 1);
+	return res->lksb.sb_status;
+}
+
+dlm_lockspace_t *md_get_lockspace(void)
+{
+	return md_lockspace;
+}
+
+struct dlm_lock_resource *md_get_sb_lock(void)
+{
+	return sb_lock;
+}
+
+struct mutex *md_get_sb_mutex(void)
+{
+	return &sb_mutex;
+}
+
+EXPORT_SYMBOL(md_get_lockspace);
+EXPORT_SYMBOL(md_get_sb_lock);
+EXPORT_SYMBOL(md_get_mutex);
+
+int md_lock_super(struct mddev *mddev, int mode)
+{
+	struct mutex *sb_mutex = mddev->sb_mutex;
+	struct dlm_lock_resource *sb_lock = mddev->dlm_md_meta;
+	dlm_lockspace_t *md_lockspace = mddev->dlm_md_lockspace;
+
+	mutex_lock(sb_mutex);
+	sb_lock->state = 0;
+	sb_lock->finished = 0;
+	sb_lock->mode = mode;
+	sb_lock->flags = 0;
+	sb_lock->parent_lkid = 0;
+	memset(&sb_lock->lksb, 0, sizeof(struct dlm_lksb));
+	while (ret && ret == -EAGAIN) {
+		ret = dlm_lock_sync(md_lockspace, sb_lock);
+	}
+	if (ret) {
+		printk(KERN_WARNING "dlm lock error: %s", strerror(ret));
+		mutex_unlock(&sb_mutex);
+	}
+	return ret;
+}
+
+void md_unlock_super(struct mddev *mddev)
+{
+	struct mutex *sb_mutex = mddev->sb_mutex;
+	struct dlm_lock_resource *sb_lock = mddev->dlm_md_meta;
+	dlm_lockspace_t *md_lockspace = mddev->dlm_md_lockspace;
+
+	dlm_unlock_sync(md_lockspace, sb_lock);
+	mutex_unlock(sb_mutex);
+}
+
 
 #ifndef MODULE
 
