@@ -128,11 +128,25 @@ typedef struct bitmap_super_s {
 	__le32 chunksize;    /* 52  the bitmap chunk size in bytes */
 	__le32 daemon_sleep; /* 56  seconds between disk flushes */
 	__le32 write_behind; /* 60  number of outstanding write-behind writes */
-	__le32 sectors_reserved; /* 64 number of 512-byte sectors that are
+	__le32 nodes;        /* 64 the maximum number of nodes in cluster. */
+	__le32 sectors_reserved; /* 68 number of 512-byte sectors that are
 				  * reserved for the bitmap. */
 
-	__u8  pad[256 - 68]; /* set to zero */
+	__u8  pad[4096 - 72]; /* set to zero */
 } bitmap_super_t;
+
+typedef struct event_counter_s {
+	__le64 events;       /* 0  event counter for the bitmap (1)*/
+	__le64 events_cleared;/* 8  event counter when last bit cleared (2) */
+	__le32 state; /* 16 bitmap state info */
+} event_counter_t; /* per-node events counter. */
+
+struct events_info {
+	__u64 events_cleared;
+	unsigned long flags;
+	int allclean;
+	int need_sync;
+};
 
 /* notes:
  * (1) This event counter is updated before the eventcounter in the md superblock
@@ -179,9 +193,9 @@ struct bitmap {
 		spinlock_t lock;
 		struct bitmap_page *bp;
 		unsigned long pages;		/* total number of pages
-						 * in the bitmap */
+						 * in the bitmap per node */
 		unsigned long missing_pages;	/* number of pages
-						 * not yet allocated */
+						 * not yet allocated all nodes*/
 		unsigned long chunkshift;	/* chunksize = 2^chunkshift
 						 * (for bitops) */
 		unsigned long chunks;		/* Total number of data
@@ -192,16 +206,20 @@ struct bitmap {
 
 	__u64	events_cleared;
 	int need_sync;
+	int used;            /* indicating which bitmap we are using. */
+	struct events_info *events; /* events info for each bitmap. */
 
 	struct bitmap_storage {
 		struct file *file;		/* backing disk file */
 		struct page *sb_page;		/* cached copy of the bitmap
 						 * file superblock */
+		struct page *per_node_page;
 		struct page **filemap;		/* list of cache pages for
 						 * the file */
 		unsigned long *filemap_attr;	/* attributes associated
 						 * w/ filemap pages */
 		unsigned long file_pages;	/* number of pages in the file*/
+		unsigned long per_node_pages;
 		unsigned long bytes;		/* total bytes in the bitmap */
 	} storage;
 
