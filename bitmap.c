@@ -721,8 +721,10 @@ out_no_sb:
  */
 /* calculate the index of the page that contains this bit */
 static inline unsigned long file_page_index(struct bitmap_storage *store,
-					    unsigned long chunk)
+					    int node, unsigned long chunk)
 {
+	chunk += (store->per_node_pages * node) << PAGE_BIT_SHIFT;
+	chunk += PER_NODE_COUNTER << 3;
 	if (store->sb_page)
 		chunk += sizeof(bitmap_super_t) << 3;
 	return chunk >> PAGE_BIT_SHIFT;
