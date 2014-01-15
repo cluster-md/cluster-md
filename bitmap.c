@@ -407,6 +407,15 @@ out:
 void bitmap_update_sb(struct bitmap *bitmap)
 {
 	bitmap_super_t *sb;
+	int ret = -EAGAIN;
+	struct mddev *mddev;
+	event_counter_t *counter;
+	events_info *info;
+	struct *page;
+	unsigned long per_section;
+	int i;
+
+	mddev = bitmap->mddev;
 
 	if (!bitmap || !bitmap->mddev) /* no bitmap for this array */
 		return;
@@ -427,10 +436,51 @@ void bitmap_update_sb(struct bitmap *bitmap)
 	/* This might have been changed by a reshape */
 	sb->sync_size = cpu_to_le64(bitmap->mddev->resync_max_sectors);
 	sb->chunksize = cpu_to_le32(bitmap->mddev->bitmap_info.chunksize);
+	sb->nodes = cpu_to_le32(bitmap->mddev->bitmap_info.nodes);
 	sb->sectors_reserved = cpu_to_le32(bitmap->mddev->
 					   bitmap_info.space);
 	kunmap_atomic(sb);
+
+	ret = md_lock_super(bitmap->mddev, DLM_LOCK_EX);
+	if (ret) {
+		return;
+	}
 	write_page(bitmap, bitmap->storage.sb_page, 1);
+	md_unlock_super(bitmap->mddev);
+	if (bitmap->used != -1) {
+		info = &bitmap->events[bitmap->used];
+		per_section = bitmap->storage.per_node_pages * bitmap->used + 1;
+		page = bitmap->storage.filemap[per_section];
+		counter = kmap_atomic(page);
+		counter.events = cpu_to_le64(mddev->events);
+		if (mddev->events < info->events_cleared) {
+			info->events_cleared = mddev->events;
+		}
+		counter.events_cleared = cpu_to_le64(info->events_cleared);
+		counter.state = cpu_to_le32(info->flags);
+		kunmap_atomic(counter);
+		write_page(bitmap, page, 1);
+	}
+	if (mddev->avail_bitmap) {
+		for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+			if (mddev->avail_bitmap[i] == -1) {
+				continue;
+			}
+			info = &bitmap->events[mddev->avail_bitmap[i]];
+			per_section = bitmap->storage.per_node_pages * mddev->avail_bitmap[i] 
+					+ 1;
+			page = bitmap->storage.filemap[per_section];
+			counter = kmap_atomic(page);
+			counter.events = cpu_to_le64(mddev->events);
+			if (mddev->events < info->events_cleared) {
+				info->events_cleared = mddev->events;
+			}
+			counter.events_cleared = cpu_to_le64(info->events_cleared);
+			counter.state = cpu_to_le32(info->flags);
+			kunmap_atomic(counter);
+			write_page(bitmap, page, 1);
+		}
+	}
 }
 
 /* print out the bitmap file superblock */
@@ -537,6 +587,7 @@ static int bitmap_read_sb(struct bitmap *bitmap)
 	char *reason = NULL;
 	bitmap_super_t *sb;
 	unsigned long chunksize, daemon_sleep, write_behind;
+	int nodes;
 	unsigned long long events;
 	unsigned long sectors_reserved = 0;
 	int err = -EINVAL;
@@ -563,10 +614,13 @@ static int bitmap_read_sb(struct bitmap *bitmap)
 		err = read_page(bitmap->storage.file, 0,
 				bitmap, bytes, sb_page);
 	} else {
+		err = md_lock_super(bitmap->mddev, DLM_LOCK_CR);
+		if (err) return err;
 		err = read_sb_page(bitmap->mddev,
 				   bitmap->mddev->bitmap_info.offset,
 				   sb_page,
 				   0, sizeof(bitmap_super_t));
+		md_unlock_super(bitmap->mddev);
 	}
 	if (err)
 		return err;
@@ -577,6 +631,7 @@ static int bitmap_read_sb(struct bitmap *bitmap)
 	daemon_sleep = le32_to_cpu(sb->daemon_sleep) * HZ;
 	write_behind = le32_to_cpu(sb->write_behind);
 	sectors_reserved = le32_to_cpu(sb->sectors_reserved);
+	nodes = le32_to_cpu(sb->nodes);
 
 	/* verify that the bitmap-specific fields are valid */
 	if (sb->magic != cpu_to_le32(BITMAP_MAGIC))
@@ -612,6 +667,11 @@ static int bitmap_read_sb(struct bitmap *bitmap)
 			       bmname(bitmap));
 			goto out;
 		}
+		/* Events counter not here, but in per-node
+		 * bitmap. So don't do any determination 
+		 * here.
+		 */
+		/*
 		events = le64_to_cpu(sb->events);
 		if (events < bitmap->mddev->events) {
 			printk(KERN_INFO
@@ -621,6 +681,7 @@ static int bitmap_read_sb(struct bitmap *bitmap)
 			       (unsigned long long) bitmap->mddev->events);
 			set_bit(BITMAP_STALE, &bitmap->flags);
 		}
+		*/
 	}
 
 	/* assign fields using values from superblock */
@@ -632,11 +693,14 @@ static int bitmap_read_sb(struct bitmap *bitmap)
 out:
 	kunmap_atomic(sb);
 out_no_sb:
+	/*
 	if (test_bit(BITMAP_STALE, &bitmap->flags))
 		bitmap->events_cleared = bitmap->mddev->events;
+	*/
 	bitmap->mddev->bitmap_info.chunksize = chunksize;
 	bitmap->mddev->bitmap_info.daemon_sleep = daemon_sleep;
 	bitmap->mddev->bitmap_info.max_write_behind = write_behind;
+	bitmap->mddev->bitmap_info.nodes = nodes;
 	if (bitmap->mddev->bitmap_info.space == 0 ||
 	    bitmap->mddev->bitmap_info.space > sectors_reserved)
 		bitmap->mddev->bitmap_info.space = sectors_reserved;
