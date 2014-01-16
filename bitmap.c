@@ -1681,7 +1681,7 @@ void bitmap_cond_end_sync(struct bitmap *bitmap, int node, sector_t sector)
 }
 EXPORT_SYMBOL(bitmap_cond_end_sync);
 
-static void bitmap_set_memory_bits(struct bitmap *bitmap, sector_t offset, int needed)
+static void bitmap_set_memory_bits(struct bitmap *bitmap, int node, sector_t offset, int needed)
 {
 	/* For each chunk covered by any of these sectors, set the
 	 * counter to 2 and possibly set resync_needed.  They should all
@@ -1691,15 +1691,15 @@ static void bitmap_set_memory_bits(struct bitmap *bitmap, sector_t offset, int n
 	sector_t secs;
 	bitmap_counter_t *bmc;
 	spin_lock_irq(&bitmap->counts.lock);
-	bmc = bitmap_get_counter(&bitmap->counts, offset, &secs, 1);
+	bmc = bitmap_get_counter(&bitmap->counts, node, offset, &secs, 1);
 	if (!bmc) {
 		spin_unlock_irq(&bitmap->counts.lock);
 		return;
 	}
 	if (!*bmc) {
 		*bmc = 2 | (needed ? NEEDED_MASK : 0);
-		bitmap_count_page(&bitmap->counts, offset, 1);
-		bitmap_set_pending(&bitmap->counts, offset);
+		bitmap_count_page(&bitmap->counts, node, offset, 1);
+		bitmap_set_pending(&bitmap->counts, node, offset);
 		bitmap->allclean = 0;
 	}
 	spin_unlock_irq(&bitmap->counts.lock);
