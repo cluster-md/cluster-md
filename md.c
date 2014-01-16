@@ -1913,6 +1913,7 @@ static unsigned long long
 super_1_rdev_size_change(struct md_rdev *rdev, sector_t num_sectors)
 {
 	struct mdp_superblock_1 *sb;
+	int ret = -EAGAIN;
 	sector_t max_sectors;
 	if (num_sectors && num_sectors < rdev->mddev->dev_sectors)
 		return 0; /* component must fit device */
@@ -1941,9 +1942,16 @@ super_1_rdev_size_change(struct md_rdev *rdev, sector_t num_sectors)
 	sb->data_size = cpu_to_le64(num_sectors);
 	sb->super_offset = rdev->sb_start;
 	sb->sb_csum = calc_sb_1_csum(sb);
+
+	ret = md_lock_super(rdev->mddev, DLM_LOCK_EX);
+	if (ret) {
+		return 0;
+	}
+
 	md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
 		       rdev->sb_page);
 	md_super_wait(rdev->mddev);
+	md_unlock_super(mddev);
 	return num_sectors;
 
 }
