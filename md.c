@@ -872,6 +872,7 @@ EXPORT_SYMBOL_GPL(sync_page_io);
 static int read_disk_sb(struct md_rdev * rdev, int size)
 {
 	char b[BDEVNAME_SIZE];
+	int ret = -EAGAIN;
 	if (!rdev->sb_page) {
 		MD_BUG();
 		return -EINVAL;
@@ -879,9 +880,30 @@ static int read_disk_sb(struct md_rdev * rdev, int size)
 	if (rdev->sb_loaded)
 		return 0;
 
-
-	if (!sync_page_io(rdev, 0, size, rdev->sb_page, READ, true))
+	mutex_lock(&sb_mutex);
+	sb_lock->finished = 0;
+	sb_lock->mode = DLM_LOCK_CR;
+	sb_lock->flags = 0;
+	sb_lock->parent_lkid = 0;
+	sb_lock->state = 0;
+	memset(&sb_lock->lksb, 0, sizeof(struct dlm_lksb));
+	while (ret && ret == -EAGAIN) {
+		ret = dlm_lock_sync(md_lockspace, sb_lock);
+	}
+	if (ret) {
+		printk(KERN_WARNING "dlm lock error: %s", strerror(ret));
+		mutex_unlock(&sb_mutex);
 		goto fail;
+	}
+	
+	ret = sync_page_io(rdev, 0, size, rdev->sb_page, READ, true)
+	if (!ret) {
+		dlm_unlock_sync(md_lockspace, sb_lock);
+		mutex_unlock(&sb_mutex);
+		goto fail;
+	}
+	dlm_unlock_sync(md_lockspace, sb_lock);
+	mutex_unlock(&sb_mutex);
 	rdev->sb_loaded = 1;
 	return 0;
 
