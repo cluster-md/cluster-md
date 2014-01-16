@@ -5255,6 +5255,109 @@ out:
 }
 EXPORT_SYMBOL_GPL(md_run);
 
+int md_send_metadata_update(struct mddev *mddev, int async)
+{
+	struct dlm_md_msg *msg;
+	struct msg_metadata_update *tmp;
+	/* super block updated. 
+	 * Should prepare message to the send thread
+	 * later when sen thread is wake up, message 
+	 * will be sent out
+	 */
+	msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
+	if (!msg) {
+		printk(KERN_WARNING "alloc memory for msg failed!\n");
+		return -ENOMEM;
+	}
+	INIT_LIST_HEAD(&msg->list);
+	init_waitqueue_head(&msg->waiter);
+	msg->sent = 0;
+	msg->buf = kzalloc(4, GFP_KERNEL);
+	if (!msg->buf) {
+		printk(KERN_WARNING "alloc memory for msg failed!\n");
+		kfree(msg);
+		return -ENOMEM;
+	}
+	msg->len = 4;
+	msg->async = async;
+	tmp = (struct msg_metadata_update *)msg->buf;
+	tmp->type = cpu_to_le32(METADATA_UPDATED);
+	spin_lock(&mddev->send_lock);
+	list_add_tail(&msg->list, &mddev->send_list);
+	spin_unlock(&mddev->send_lock);
+	md_wakeup_thread(mddev->send_thread);
+	if (!async) {
+		wait_event(&msg->waiter, msg->sent != 0);
+		kfree(msg->buf);
+		kfree(msg);
+	}
+	return 0;
+}
+
+int md_send_resync_finished(struct mddev *mddev, int bmpno)
+{
+	struct dlm_md_msg *msg;
+	struct msg_resync_finish *resync;
+	msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
+	if (!msg) {
+		printk(KERN_WARNING "allocate memory for message failed!\n");
+		return -ENOMEM;
+	}
+	INIT_LIST_HEAD(&msg->list);
+	init_waitqueue_head(&msg->waiter);
+	msg->sent = 0;
+	resync = kzalloc(sizeof(struct msg_resync_finish), GFP_KERNEL);
+	if (!resync) {
+		kfree(msg);
+		printk(KERN_WARNING "allocate memory for message failed!\n");
+		return -ENOMEM;
+	}
+	msg->buf = resync;
+	resync->type = cpu_to_le32(RESYNC_FINISHED);
+	resync->bitmap = cpu_to_le32(bmpno);
+	msg->len = sizeof(struct msg_resync_finish);
+	spin_lock(&mddev->send_lock);
+	list_add_tail(&msg->list, &mddev->send_list);
+	spin_unlock(&mddev->send_lock);
+	md_wakeup_thread(mddev->send_thread);
+	wait_event(&msg->waiter, msg->sent != 0);
+	kfree(msg->buf);
+	kfree(msg);
+	return 0;
+}
+
+int md_send_suspend(struct mddev *mddev, long long sus_start, long long sus_end)
+{
+	struct dlm_md_msg *msg;
+	struct msg_suspend *suspend;
+	msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
+	if (!msg) {
+		return -ENOMEM;
+	}
+	msg->buf = kzalloc(sizeof(struct msg_suspend), GFP_KERNEL);
+	if (!msg->buf) {
+		kfree(msg);
+		return -ENOMEM;
+	}
+
+	suspend = (struct msg_suspend *)msg->buf;
+	suspend->type = cpu_to_le32(SUSPEND_RANGE);
+	suspend->low = cpu_to_le64(sus_start);
+	suspend->high = cpu_to_le64(sus_end);
+	msg->len = sizeof(struct msg_suspend);
+	INIT_LIST_HEAD(&msg->list);
+	init_waitqueue_head(&msg->waiter);
+	msg->sent = 0;
+	spin_lock(&mddev->send_lock);
+	list_add_tail(&msg->list, &mddev->send_list);
+	spin_unlock(&mddev->send_lock);
+	md_wakeup_thread(mddev->send_thread);
+	wait_event(&msg->waiter, msg->sent != 0);
+	kfree(msg->buf);
+	kfree(msg);
+	return 0;
+}
+
 static int do_md_run(struct mddev *mddev)
 {
 	int err;
