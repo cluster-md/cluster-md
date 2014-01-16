@@ -2946,6 +2946,46 @@ static struct r1conf *setup_conf(struct mddev *mddev)
 	return ERR_PTR(err);
 }
 
+static struct dlm_lock_resource *init_lock_resource(struct mddev *mddev, char *name)
+{
+	struct dlm_lock_resource *ret = NULL;
+	int i = 0;
+	ret = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
+	if (!ret) {
+		return ret;
+	}
+	INIT_LIST_HEAD(&ret->list);
+	init_waitqueue_head(&ret->waiter);
+	ret->mddev = mddev;
+	/* uuid.name */
+	ret->name = kzalloc(strlen(name) + 34, GFP_KERNEL);
+	if (!ret->name) {
+		kfree(ret);
+		return NULL;
+	}
+	for ( ; i < 16; i++) {
+		sprintf(ret->name + i * 2, "%02x", mmdev->uuid[i]);
+	}
+	ret->name[32] = '.';
+	memcpy(ret->name + 33, name, strlen(name));
+	return ret;
+}
+
+static void deinit_lock_resource(struct dlm_lock_resource *res)
+{
+	if (!res) {
+		return;
+	}
+	if (res->name) {
+		kfree(res->name);
+	}
+	if (res->lksb.sb_lvbptr) {
+		kfree(res->lksb.sb_lvbptr);
+	}
+	kfree(res);
+	return;
+}
+
 static int stop(struct mddev *mddev);
 static int run(struct mddev *mddev)
 {
