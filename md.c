@@ -7539,6 +7539,8 @@ void md_write_end(struct mddev *mddev)
  */
 int md_allow_write(struct mddev *mddev)
 {
+	int ret;
+
 	if (!mddev->pers)
 		return 0;
 	if (mddev->ro)
@@ -7556,6 +7558,10 @@ int md_allow_write(struct mddev *mddev)
 			mddev->safemode = 1;
 		spin_unlock_irq(&mddev->write_lock);
 		md_update_sb(mddev, 0);
+		ret = md_send_metadat_update(mddev, 1);
+		if (!ret) {
+			printk(KERN_WARNING "send metadata update failed!\n");
+		}
 		sysfs_notify_dirent_safe(mddev->sysfs_state);
 	} else
 		spin_unlock_irq(&mddev->write_lock);
