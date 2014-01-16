@@ -2459,6 +2459,7 @@ static void md_update_sb(struct mddev * mddev, int force_change)
 	int sync_req;
 	int nospares = 0;
 	int any_badblocks_changed = 0;
+	int ret = -EAGAIN;
 
 	if (mddev->ro) {
 		if (force_change)
@@ -2554,6 +2555,11 @@ repeat:
 			set_bit(FaultRecorded, &rdev->flags);
 	}
 
+
+	/* CRAID1: Should get exclusive on metadata
+	 * lock and then performs metadata update.
+	 */
+
 	sync_sbs(mddev, nospares);
 	spin_unlock_irq(&mddev->write_lock);
 
@@ -2561,6 +2567,13 @@ repeat:
 		 mdname(mddev), mddev->in_sync);
 
 	bitmap_update_sb(mddev->bitmap);
+
+	ret = md_lock_super(mddev, DLM_LOCK_EX);
+
+	if (ret) {
+		return;
+	}
+
 	rdev_for_each(rdev, mddev) {
 		char b[BDEVNAME_SIZE];
 
@@ -2595,6 +2608,14 @@ repeat:
 			break;
 	}
 	md_super_wait(mddev);
+
+
+	/* CRAID1: metadata updated, broadcast 
+	 * metadata update finished message to other nodes.
+	 */
+	md_unlock_super(mddev);
+
+
 	/* if there was a failure, MD_CHANGE_DEVS was set, and we re-write super */
 
 	spin_lock_irq(&mddev->write_lock);
@@ -2720,8 +2741,13 @@ state_store(struct md_rdev *rdev, const char *buf, size_t len)
 		else {
 			struct mddev *mddev = rdev->mddev;
 			kick_rdev_from_array(rdev);
-			if (mddev->pers)
+			if (mddev->pers) {
 				md_update_sb(mddev, 1);
+				ret = md_send_metadat_update(mddev, 0);
+				if (!ret) {
+					printk(KERN_WARNING "send metadata update failed!\n");
+				}
+			}
 			md_new_event(mddev);
 			err = 0;
 		}
