@@ -6920,6 +6920,9 @@ static int md_open(struct block_device *bdev, fmode_t mode)
 	mutex_unlock(&mddev->open_mutex);
 
 	check_disk_change(bdev);
+	mddev->dlm_md_lockspace = md_get_lockspace();
+	mddev->sb_mutex = md_get_sb_mutex();
+	mddev->dlm_md_meta = md_get_sb_lock();
  out:
 	return err;
 }
