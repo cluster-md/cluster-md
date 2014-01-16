@@ -6120,6 +6120,7 @@ static int hot_add_disk(struct mddev * mddev, dev_t dev)
 	char b[BDEVNAME_SIZE];
 	int err;
 	struct md_rdev *rdev;
+	int ret;
 
 	if (!mddev->pers)
 		return -ENODEV;
@@ -6174,6 +6175,10 @@ static int hot_add_disk(struct mddev * mddev, dev_t dev)
 	rdev->raid_disk = -1;
 
 	md_update_sb(mddev, 1);
+	ret = md_send_metadat_update(mddev, 0);
+	if (!ret) {
+		printk(KERN_WARNING "send metadata update failed!\n");
+	}
 
 	/*
 	 * Kick recovery, maybe this spare has to be added to the
