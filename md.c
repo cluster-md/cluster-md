@@ -5373,6 +5373,8 @@ static int do_md_run(struct mddev *mddev)
 
 	md_wakeup_thread(mddev->thread);
 	md_wakeup_thread(mddev->sync_thread); /* possibly kick off a reshape */
+	md_wakeup_thread(mddev->recv_thread);
+	md_wakeup_thread(mddev->send_thread);
 
 	set_capacity(mddev->gendisk, mddev->array_sectors);
 	revalidate_disk(mddev->gendisk);
