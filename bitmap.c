@@ -1432,7 +1432,7 @@ __acquires(bitmap->lock)
 			&(bitmap->bp[page].map[pageoff]);
 }
 
-int bitmap_startwrite(struct bitmap *bitmap, sector_t offset, unsigned long sectors, int behind)
+int bitmap_startwrite(struct bitmap *bitmap, int node, sector_t offset, unsigned long sectors, int behind)
 {
 	if (!bitmap)
 		return 0;
@@ -1453,7 +1453,7 @@ int bitmap_startwrite(struct bitmap *bitmap, sector_t offset, unsigned long sect
 		bitmap_counter_t *bmc;
 
 		spin_lock_irq(&bitmap->counts.lock);
-		bmc = bitmap_get_counter(&bitmap->counts, offset, &blocks, 1);
+		bmc = bitmap_get_counter(&bitmap->counts, node, offset, &blocks, 1);
 		if (!bmc) {
 			spin_unlock_irq(&bitmap->counts.lock);
 			return 0;
@@ -1475,8 +1475,8 @@ int bitmap_startwrite(struct bitmap *bitmap, sector_t offset, unsigned long sect
 
 		switch (*bmc) {
 		case 0:
-			bitmap_file_set_bit(bitmap, offset);
-			bitmap_count_page(&bitmap->counts, offset, 1);
+			bitmap_file_set_bit(bitmap, node, offset);
+			bitmap_count_page(&bitmap->counts, node, offset, 1);
 			/* fall through */
 		case 1:
 			*bmc = 2;
