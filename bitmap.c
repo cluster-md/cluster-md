@@ -1235,17 +1235,19 @@ static bitmap_counter_t *bitmap_get_counter(struct bitmap_counts *bitmap,
  *			out to disk
  */
 
-void bitmap_daemon_work(struct mddev *mddev)
+void bitmap_daemon_work(struct mddev *mddev, int node)
 {
 	struct bitmap *bitmap;
-	unsigned long j;
+	unsigned long j, start, end;
 	unsigned long nextpage;
 	sector_t blocks;
 	struct bitmap_counts *counts;
+	struct events_info *info;
 
 	/* Use a mutex to guard daemon_work against
 	 * bitmap_destroy.
 	 */
+	info = &bitmap->events[node];
 	mutex_lock(&mddev->bitmap_info.mutex);
 	bitmap = mddev->bitmap;
 	if (bitmap == NULL) {
@@ -1267,18 +1269,36 @@ void bitmap_daemon_work(struct mddev *mddev)
 	 * So set NEEDWRITE now, then after we make any last-minute changes
 	 * we will write it.
 	 */
-	for (j = 0; j < bitmap->storage.file_pages; j++)
+	start = bitmap->storage.per_node_pages * node + 1;
+	end = bitmap->storage.per_node_pages * (node + 1) + 1;
+	for (j = 0; j < end; ) {
 		if (test_and_clear_page_attr(bitmap, j,
 					     BITMAP_PAGE_PENDING))
 			set_page_attr(bitmap, j,
 				      BITMAP_PAGE_NEEDWRITE);
+		if (!j) {
+			j = start;
+		} else {
+			j++;
+		}
+	}
 
-	if (bitmap->need_sync &&
+	if (info->need_sync &&
 	    mddev->bitmap_info.external == 0) {
 		/* Arrange for superblock update as well as
 		 * other changes */
-		bitmap_super_t *sb;
-		bitmap->need_sync = 0;
+		event_counter_t *counter;
+		info->need_sync = 0;
+		/* evets counter resides in per node
+		 * bitmap instead of super header
+		 */
+		if (bitmap->storage.filemap) {
+			counter = kmap_atomic(bitmap->storage.filemap[start]);
+			counter->events_cleared = cpu_to_le64(info->events_cleared);
+			kumap_atomic(counter);
+			set_page_attr(bitmap, start, BITMAP_PAGE_NEEDWRITE);
+		}
+		/*
 		if (bitmap->storage.filemap) {
 			sb = kmap_atomic(bitmap->storage.sb_page);
 			sb->events_cleared =
@@ -1287,6 +1307,7 @@ void bitmap_daemon_work(struct mddev *mddev)
 			set_page_attr(bitmap, 0,
 				      BITMAP_PAGE_NEEDWRITE);
 		}
+		*/
 	}
 	/* Now look at the bitmap counters and if any are '2' or '1',
 	 * decrement and handle accordingly.
@@ -1300,13 +1321,13 @@ void bitmap_daemon_work(struct mddev *mddev)
 
 		if (j == nextpage) {
 			nextpage += PAGE_COUNTER_RATIO;
-			if (!counts->bp[j >> PAGE_COUNTER_SHIFT].pending) {
+			if (!counts->bp[j >> PAGE_COUNTER_SHIFT + counts->pages * node].pending) {
 				j |= PAGE_COUNTER_MASK;
 				continue;
 			}
-			counts->bp[j >> PAGE_COUNTER_SHIFT].pending = 0;
+			counts->bp[j >> PAGE_COUNTER_SHIFT + counts->pages * node].pending = 0;
 		}
-		bmc = bitmap_get_counter(counts,
+		bmc = bitmap_get_counter(counts, node,
 					 block,
 					 &blocks, 0);
 
@@ -1314,14 +1335,14 @@ void bitmap_daemon_work(struct mddev *mddev)
 			j |= PAGE_COUNTER_MASK;
 			continue;
 		}
-		if (*bmc == 1 && !bitmap->need_sync) {
+		if (*bmc == 1 && !info->need_sync) {
 			/* We can clear the bit */
 			*bmc = 0;
-			bitmap_count_page(counts, block, -1);
-			bitmap_file_clear_bit(bitmap, block);
+			bitmap_count_page(counts, node, block, -1);
+			bitmap_file_clear_bit(bitmap, node, block);
 		} else if (*bmc && *bmc <= 2) {
 			*bmc = 1;
-			bitmap_set_pending(counts, block);
+			bitmap_set_pending(counts, node, block);
 			bitmap->allclean = 0;
 		}
 	}
@@ -1336,9 +1357,8 @@ void bitmap_daemon_work(struct mddev *mddev)
 	 * We mustn't write any other blocks before the superblock.
 	 */
 	for (j = 0;
-	     j < bitmap->storage.file_pages
-		     && !test_bit(BITMAP_STALE, &bitmap->flags);
-	     j++) {
+	     j < end && !test_bit(BITMAP_STALE, &info->flags);
+	     ) {
 
 		if (test_page_attr(bitmap, j,
 				   BITMAP_PAGE_DIRTY))
@@ -1346,7 +1366,18 @@ void bitmap_daemon_work(struct mddev *mddev)
 			break;
 		if (test_and_clear_page_attr(bitmap, j,
 					     BITMAP_PAGE_NEEDWRITE)) {
+			if (!j) {
+				md_lock_super(mddev);
+			}
 			write_page(bitmap, bitmap->storage.filemap[j], 0);
+			if (!j) {
+				md_unlock_super(mddev);
+			}
+		}
+		if (!j) {
+			j = start;
+		} else {
+			j++;
 		}
 	}
 
