@@ -1603,7 +1603,7 @@ int bitmap_start_sync(struct bitmap *bitmap, int node, sector_t offset, sector_t
 }
 EXPORT_SYMBOL(bitmap_start_sync);
 
-void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, int aborted)
+void bitmap_end_sync(struct bitmap *bitmap, int node, sector_t offset, sector_t *blocks, int aborted)
 {
 	bitmap_counter_t *bmc;
 	unsigned long flags;
@@ -1613,7 +1613,7 @@ void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, i
 		return;
 	}
 	spin_lock_irqsave(&bitmap->counts.lock, flags);
-	bmc = bitmap_get_counter(&bitmap->counts, offset, blocks, 0);
+	bmc = bitmap_get_counter(&bitmap->counts, node, offset, blocks, 0);
 	if (bmc == NULL)
 		goto unlock;
 	/* locked */
@@ -1624,7 +1624,7 @@ void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, i
 			*bmc |= NEEDED_MASK;
 		else {
 			if (*bmc <= 2) {
-				bitmap_set_pending(&bitmap->counts, offset);
+				bitmap_set_pending(&bitmap->counts, node, offset);
 				bitmap->allclean = 0;
 			}
 		}
