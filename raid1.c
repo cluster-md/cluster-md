@@ -2461,14 +2461,18 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
 	struct bio *bio;
 	sector_t max_sector, nr_sectors;
 	int disk = -1;
-	int i;
+	int i, rv;
 	int wonly = -1;
 	int write_targets = 0, read_targets = 0;
-	sector_t sync_blocks;
+	sector_t sync_blocks, oldsync_blocks;
 	int still_degraded = 0;
 	int good_sectors = RESYNC_SECTORS;
 	int min_bad = 0; /* number of sectors that are bad in all devices */
+	sector_t sus_start, sus_end;
+	struct dlm_md_msg *msg;
+	struct msg_suspend *suspend;
 
+	sus_start = sector_nr;
 	if (!conf->r1buf_pool)
 		if (init_resync(conf))
 			return 0;
@@ -2480,13 +2484,25 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
 		 * only be one in raid1 resync.
 		 * We can find the current addess in mddev->curr_resync
 		 */
-		if (mddev->curr_resync < max_sector) /* aborted */
-			bitmap_end_sync(mddev->bitmap, mddev->curr_resync,
+		if (mddev->curr_resync < max_sector) {/* aborted */
+			for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+				if (mddev->avail_bitmap[i] == -1) {
+					continue;
+				}
+				bitmap_end_sync(mddev->bitmap, mddev->avail_bitmap[i], 
+						mddev->curr_resync,
 						&sync_blocks, 1);
+			}
+		}
 		else /* completed sync */
 			conf->fullsync = 0;
 
-		bitmap_close_sync(mddev->bitmap);
+		for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+			if (mddev->avail_bitmap[i] == -1) {
+				continue;
+			}
+			bitmap_close_sync(mddev->bitmap, mddev->avail_bitmap[i]);
+		}
 		close_sync(conf);
 		return 0;
 	}
@@ -2501,8 +2517,26 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
 	/* before building a request, check if we can skip these blocks..
 	 * This call the bitmap_start_sync doesn't actually record anything
 	 */
-	if (!bitmap_start_sync(mddev->bitmap, sector_nr, &sync_blocks, 1) &&
-	    !conf->fullsync && !test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery)) {
+	rv = 0;
+	oldsync_blocks = 0;
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		if (mddev->avail_bitmap[i] == -1) {
+			continue;
+		}
+		rv |= bitmap_start_sync(mddev->bitmap, mddev->avail_bitmap[i],
+				sector_nr, &sync_blocks, 1);
+		if (rv) {
+			if (oldsync_blocks == 0) {
+				oldsync_blocks = sync_blocks;
+			} else {
+				if (sync_blocks < oldsync_blocks) {
+					oldsync_blocks = sync_blocks;
+				}
+			}
+		}
+	}
+	sync_blocks = oldsync_blocks;
+	if (!rv && !conf->fullsync && !test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery)) {
 		/* We can skip this block, and probably several more */
 		*skipped = 1;
 		return sync_blocks;
@@ -2515,7 +2549,12 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
 	if (!go_faster && conf->nr_waiting)
 		msleep_interruptible(1000);
 
-	bitmap_cond_end_sync(mddev->bitmap, sector_nr);
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		if (mddev->avail_bitmap[i] == -1) {
+			continue;
+		}
+		bitmap_cond_end_sync(mddev->bitmap, mddev->avail_bitmap[i], sector_nr);
+	}
 	r1_bio = mempool_alloc(conf->r1buf_pool, GFP_NOIO);
 	raise_barrier(conf);
 
@@ -2669,8 +2708,26 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
 		if (len == 0)
 			break;
 		if (sync_blocks == 0) {
-			if (!bitmap_start_sync(mddev->bitmap, sector_nr,
-					       &sync_blocks, still_degraded) &&
+			rv = 0;
+			oldsync_blocks = 0;
+			for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+				if (mddev->avail_bitmap[i] == -1) {
+					continue;
+				}
+				rv |= bitmap_start_sync(mddev->bitmap, mddev->avail_bitmap[i],
+						sector_nr, &sync_blocks, 1);
+				if (rv) {
+					if (oldsync_blocks == 0) {
+						oldsync_blocks = sync_blocks;
+					} else {
+						if (sync_blocks < oldsync_blocks) {
+							oldsync_blocks = sync_blocks;
+						}
+					}
+				}
+			}
+			sync_blocks = oldsync_blocks;
+			if (!rv &&
 			    !conf->fullsync &&
 			    !test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery))
 				break;
@@ -2706,6 +2763,37 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
 	} while (r1_bio->bios[disk]->bi_vcnt < RESYNC_PAGES);
  bio_full:
 	r1_bio->sectors = nr_sectors;
+	sus_end = sus_start + nr_sectors;
+
+	/* broadcast out suspend P - Q message and
+	 * waiting for response.
+	 * then continue resync
+	 */
+	msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
+	if (!msg) {
+		return 0;
+	}
+	msg->buf = kzalloc(sizeof(struct msg_suspend), GFP_KERNEL);
+	if (!msg->buf) {
+		kfree(msg);
+		return 0;
+	}
+
+	suspend = (struct msg_suspend *)msg->buf;
+	suspend->type = cpu_to_le32(SUSPEND_RANGE);
+	suspend->low = cpu_to_le64(sus_start);
+	suspend->high = cpu_to_le64(sus_end);
+	msg->len = sizeof(struct msg_suspend);
+	INIT_LIST_HEAD(&msg->list);
+	init_waitqueue_head(&msg->waiter);
+	msg->sent = 0;
+	spin_lock(&mddev->send_lock);
+	list_add_tail(&msg->list, &mddev->send_list);
+	spin_unlock(&mddev->send_lock);
+	md_wakeup_thread(mddev->send_thread);
+	wait_event(&msg->waiter, msg->sent != 0);
+	kfree(msg->buf);
+	kfree(msg);
 
 	/* For a user-requested sync, we read all readable devices and do a
 	 * compare
