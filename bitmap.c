@@ -1212,11 +1212,15 @@ static void bitmap_count_page(struct bitmap_counts *bitmap,
 	bitmap_checkfree(bitmap, page);
 }
 
-static void bitmap_set_pending(struct bitmap_counts *bitmap, sector_t offset)
+static void bitmap_set_pending(struct bitmap_counts *bitmap, int node, sector_t offset)
 {
 	sector_t chunk = offset >> bitmap->chunkshift;
 	unsigned long page = chunk >> PAGE_COUNTER_SHIFT;
 	struct bitmap_page *bp = &bitmap->bp[page];
+
+
+	page += bitmap->pages * node;
+	bp = &bitmap->bp[page];
 
 	if (!bp->pending)
 		bp->pending = 1;
