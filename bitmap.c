@@ -1025,7 +1025,7 @@ static void bitmap_set_memory_bits(struct bitmap *bitmap, sector_t offset, int n
  */
 static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
 {
-	unsigned long i, chunks, index, oldindex, bit;
+	unsigned long i, chunks, index, oldindex, bit, j;
 	struct page *page = NULL;
 	unsigned long bit_cnt = 0;
 	struct file *file;
@@ -1034,6 +1034,10 @@ static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
 	int ret = -ENOSPC;
 	void *paddr;
 	struct bitmap_storage *store = &bitmap->storage;
+	struct mddev *mddev = bitmap->mddev;
+	struct events_info *info;
+	struct event_counter_t *counter;
+	__u64 events;
 
 	chunks = bitmap->counts.chunks;
 	file = store->file;
@@ -1071,66 +1075,98 @@ static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
 	if (!bitmap->mddev->bitmap_info.external)
 		offset = sizeof(bitmap_super_t);
 
-	for (i = 0; i < chunks; i++) {
-		int b;
-		index = file_page_index(&bitmap->storage, i);
-		bit = file_page_offset(&bitmap->storage, i);
-		if (index != oldindex) { /* this is a new page, read it in */
-			int count;
-			/* unmap the old page, we're done with it */
-			if (index == store->file_pages-1)
-				count = store->bytes - index * PAGE_SIZE;
-			else
-				count = PAGE_SIZE;
-			page = store->filemap[index];
-			if (file)
-				ret = read_page(file, index, bitmap,
-						count, page);
-			else
-				ret = read_sb_page(
-					bitmap->mddev,
-					bitmap->mddev->bitmap_info.offset,
-					page,
-					index, count);
+	for (j = 0; j < mddev->bitmap_info.nodes; j++) {
+		offset = PER_NODE_COUNTER;
+		outofdate = 0;
+		for (i = 0; i < chunks; i++) {
+			int b;
+			index = file_page_index(&bitmap->storage, j, i);
+			bit = file_page_offset(&bitmap->storage, j, i);
+			if (index != oldindex) { /* this is a new page, read it in */
+				int count;
+				/* unmap the old page, we're done with it */
+				if (index == store->file_pages-1)
+					count = store->bytes - index * PAGE_SIZE;
+				else
+					count = PAGE_SIZE;
+				page = store->filemap[index];
+				if (file)
+					ret = read_page(file, index, bitmap,
+							count, page);
+				else
+					ret = read_sb_page(
+						bitmap->mddev,
+						bitmap->mddev->bitmap_info.offset,
+						page,
+						index, count);
 
-			if (ret)
-				goto err;
-
-			oldindex = index;
-
-			if (outofdate) {
-				/*
-				 * if bitmap is out of date, dirty the
-				 * whole page and write it out
-				 */
-				paddr = kmap_atomic(page);
-				memset(paddr + offset, 0xff,
-				       PAGE_SIZE - offset);
-				kunmap_atomic(paddr);
-				write_page(bitmap, page, 1);
-
-				ret = -EIO;
-				if (test_bit(BITMAP_WRITE_ERROR,
-					     &bitmap->flags))
+				if (ret)
 					goto err;
+
+				oldindex = index;
+
+				if (offset) {
+					/* this is the page contains events info. */
+					counter = kmap_atomic(page);
+					info = &bitmap->events[j];
+					info->events_cleared = 
+						le64_to_cpu(counter->events_cleared);
+					events = le64_to_cpu(counter->events);
+					if (mddev->persistent) {
+						if (events < mddev->events) {
+							printk(KERN_INFO
+			       				"%s: bitmap file is out of date (%llu < %llu) "
+			       				"-- forcing full recovery\n",
+			       				bmname(bitmap), events,
+			       				(unsigned long long) bitmap->mddev->events);
+							set_bit(BITMAP_STALE, &info->flags);
+						}
+					}
+					info->flags |= le32_to_cpu(counter->state);
+					outofdate = test_bit(BITMAP_STALE, &info->flags);
+					if (outofdate) {
+						printk(KERN_INFO "%s: bitmap file for node "
+						"%d is out of date, doing full "
+						"recovery\n", bmname(bitmap), j);
+						info->events_cleared = mddev->events;
+					}
+					kumap_atomic(counter);
+				}
+
+				if (outofdate) {
+					/*
+					 * if bitmap is out of date, dirty the
+					 * whole page and write it out
+					 */
+					paddr = kmap_atomic(page);
+					memset(paddr + offset, 0xff,
+					       PAGE_SIZE - offset);
+					kunmap_atomic(paddr);
+					write_page(bitmap, page, 1);
+
+					ret = -EIO;
+					if (test_bit(BITMAP_WRITE_ERROR,
+						     &bitmap->flags))
+						goto err;
+				}
 			}
+			paddr = kmap_atomic(page);
+			if (test_bit(BITMAP_HOSTENDIAN, &bitmap->flags))
+				b = test_bit(bit, paddr);
+			else
+				b = test_bit_le(bit, paddr);
+			kunmap_atomic(paddr);
+			if (b) {
+				/* if the disk bit is set, set the memory bit */
+				int needed = ((sector_t)(i+1) << bitmap->counts.chunkshift
+					      >= start);
+				bitmap_set_memory_bits(bitmap, j,
+						       (sector_t)i << bitmap->counts.chunkshift,
+						       needed);
+				bit_cnt++;
+			}
+			offset = 0;
 		}
-		paddr = kmap_atomic(page);
-		if (test_bit(BITMAP_HOSTENDIAN, &bitmap->flags))
-			b = test_bit(bit, paddr);
-		else
-			b = test_bit_le(bit, paddr);
-		kunmap_atomic(paddr);
-		if (b) {
-			/* if the disk bit is set, set the memory bit */
-			int needed = ((sector_t)(i+1) << bitmap->counts.chunkshift
-				      >= start);
-			bitmap_set_memory_bits(bitmap,
-					       (sector_t)i << bitmap->counts.chunkshift,
-					       needed);
-			bit_cnt++;
-		}
-		offset = 0;
 	}
 
 	printk(KERN_INFO "%s: bitmap initialized from disk: "
