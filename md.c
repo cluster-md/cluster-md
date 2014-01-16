@@ -5044,6 +5044,7 @@ int md_run(struct mddev *mddev)
 	int err;
 	struct md_rdev *rdev;
 	struct md_personality *pers;
+	int ret;
 
 	if (list_empty(&mddev->disks))
 		/* cannot run an array with no devices.. */
@@ -5230,9 +5231,22 @@ int md_run(struct mddev *mddev)
 	
 	set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
 	
-	if (mddev->flags & MD_UPDATE_SB_FLAGS)
+	if (mddev->flags & MD_UPDATE_SB_FLAGS) {
+		struct dlm_md_msg *msg;
+		struct msg_metadata_update *tmp;
 		md_update_sb(mddev, 0);
+		/* super block updated. 
+		 * Should prepare message to the send thread
+		 * later when sen thread is wake up, message 
+		 * will be sent out
+		 */
+		ret = md_send_metadat_update(mddev, 1);
+		if (!ret) {
+			printk(KERN_WARNING "send metadata update failed!\n");
+		}
+	}
 
+out:
 	md_new_event(mddev);
 	sysfs_notify_dirent_safe(mddev->sysfs_state);
 	sysfs_notify_dirent_safe(mddev->sysfs_action);
