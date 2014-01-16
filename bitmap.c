@@ -1551,7 +1551,7 @@ void bitmap_endwrite(struct bitmap *bitmap, int node, sector_t offset, unsigned 
 }
 EXPORT_SYMBOL(bitmap_endwrite);
 
-static int __bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks,
+static int __bitmap_start_sync(struct bitmap *bitmap, int node, sector_t offset, sector_t *blocks,
 			       int degraded)
 {
 	bitmap_counter_t *bmc;
@@ -1561,7 +1561,7 @@ static int __bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t 
 		return 1; /* always resync if no bitmap */
 	}
 	spin_lock_irq(&bitmap->counts.lock);
-	bmc = bitmap_get_counter(&bitmap->counts, offset, blocks, 0);
+	bmc = bitmap_get_counter(&bitmap->counts, node, offset, blocks, 0);
 	rv = 0;
 	if (bmc) {
 		/* locked */
@@ -1579,7 +1579,7 @@ static int __bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t 
 	return rv;
 }
 
-int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks,
+int bitmap_start_sync(struct bitmap *bitmap, int node, sector_t offset, sector_t *blocks,
 		      int degraded)
 {
 	/* bitmap_start_sync must always report on multiples of whole
@@ -1594,7 +1594,7 @@ int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks,
 
 	*blocks = 0;
 	while (*blocks < (PAGE_SIZE>>9)) {
-		rv |= __bitmap_start_sync(bitmap, offset,
+		rv |= __bitmap_start_sync(bitmap, node, offset,
 					  &blocks1, degraded);
 		offset += blocks1;
 		*blocks += blocks1;
