@@ -2318,8 +2318,75 @@ static void raid1d(struct md_thread *thread)
 	struct r1conf *conf = mddev->private;
 	struct list_head *head = &conf->retry_list;
 	struct blk_plug plug;
+	struct dlm_lock_resource *res;
+	int i, ret;
+	struct bitmap *bmp;
 
+	bmp = mddev->bitmap;
 	md_check_recovery(mddev);
+	/* handle raid1 cores here.
+	 * message handling, reclaim bitmap locks if we 
+	 * block others to upgrade to EX, bitmap choose.
+	 */
+	/* choose one bitmap for our usage. */
+	mutex_lock(&mddev->avail_mutex);
+	if (bmp->used == -1) {
+		for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+			if (mddev->avail_bitmap[1] == -1) {
+				continue;
+			}
+			res = find_bitmap_by_node(mddev, mddev->avail_bitmap[i]);
+			res->mode = DLM_LOCK_EX;
+			res->finished = 0;
+			res->flags = DLM_LKF_CONVERT | DLM_LKF_NOQUEUE;
+			ret = bitmp_lock_sync(res);
+			if (!ret) {
+				bmp->used = mddev->avail_bitmap[i];
+				wake_up(&mddev->bitmap_wait);
+				/* exclude this from avail bitmaps? */
+				mddev->avail_bitmap[i] = -1;
+				break;
+			}
+		}
+	}
+	mutex_unlock(&mddev->avail_mutex);
+
+	/* we are block others upgrade to EX. */
+	mutex_lock(&mddev->reclaim_mutex);
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		if (mddev->reclaim_bitmap[i] == -1) {
+			continue;
+		}
+		if (mddev->reclaim_bitmap[i] == bitmap->used) {
+			mddev->reclaim_bitmap[i] = -1;
+			continue;
+		}
+		res = find_bitmap_by_node(mddev, mddev->avail_bitmap[i]);
+		res->finished = 0;
+		bitmp_unlock_sync(res);
+		/* unlock and then rerequest lock. */
+		res->mode = DLM_LOCK_CR;
+		res->finished = 0;
+		res->flags = 0;
+		ret = bitmap_lock_async(res);
+		if (ret) {
+			printk(KERN_WARNING "request CR on bitmap %d failed!\n",
+				mddev->reclaim_bitmap[i]);
+		}
+		mddev->reclaim_bitmap[i] = -1;
+	}
+	mutex_unlock(&mddev->reclaim_mutex);
+	/* message handling.. */
+	if (mddev->msg_recvd) {
+		if (mddev->msg_recvd->type >= CLUSTER_MD_MSG_MIN
+		    && mddev->msg_recvd->type <= CLUSTER_MD_MSG_MAX) {
+			ret = handler[mdedv->msg_recvd->type].handle(mddev, mddev->msg_recvd);
+		} else {
+			printk(KERN_WARNING "invalid message received!\n");
+		}
+		mddev->msg_recvd = NULL;
+		wake_up(&mddev->recv_wait);
+	}
 
 	blk_start_plug(&plug);
 	for (;;) {
