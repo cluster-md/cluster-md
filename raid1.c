@@ -2285,6 +2285,24 @@ read_more:
 	}
 }
 
+int handle_metadata_update(struct mddev *mddev, struct msg_entry *entry)
+{
+}
+
+int handle_resync_finished(struct mddev *mddev, struct msg_entry *entry)
+{
+}
+
+int handle_suspend_range(struct mddev *mddev, struct msg_entry *entry)
+{
+}
+
+static struct msg_handle_struct handler[] = {
+	{METADATA_UPDATED, handle_metadata_update},
+	{RESYNC_FINISHED,  handle_resync_finished},
+	{SUSPEND_RANGE,    handle_suspend_range}
+};
+
 static void raid1d(struct md_thread *thread)
 {
 	struct mddev *mddev = thread->mddev;
