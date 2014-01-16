@@ -1651,7 +1651,7 @@ void bitmap_close_sync(struct bitmap *bitmap, int node)
 }
 EXPORT_SYMBOL(bitmap_close_sync);
 
-void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector)
+void bitmap_cond_end_sync(struct bitmap *bitmap, int node, sector_t sector)
 {
 	sector_t s = 0;
 	sector_t blocks;
@@ -1673,7 +1673,7 @@ void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector)
 	sector &= ~((1ULL << bitmap->counts.chunkshift) - 1);
 	s = 0;
 	while (s < sector && s < bitmap->mddev->resync_max_sectors) {
-		bitmap_end_sync(bitmap, s, &blocks, 0);
+		bitmap_end_sync(bitmap, node, s, &blocks, 0);
 		s += blocks;
 	}
 	bitmap->last_end_sync = jiffies;
