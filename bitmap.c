@@ -1496,9 +1496,11 @@ int bitmap_startwrite(struct bitmap *bitmap, int node, sector_t offset, unsigned
 }
 EXPORT_SYMBOL(bitmap_startwrite);
 
-void bitmap_endwrite(struct bitmap *bitmap, sector_t offset, unsigned long sectors,
+void bitmap_endwrite(struct bitmap *bitmap, int node, sector_t offset, unsigned long sectors,
 		     int success, int behind)
 {
+	struct events_info *info;
+	info = &bitmap->events[node];
 	if (!bitmap)
 		return;
 	if (behind) {
@@ -1515,16 +1517,16 @@ void bitmap_endwrite(struct bitmap *bitmap, sector_t offset, unsigned long secto
 		bitmap_counter_t *bmc;
 
 		spin_lock_irqsave(&bitmap->counts.lock, flags);
-		bmc = bitmap_get_counter(&bitmap->counts, offset, &blocks, 0);
+		bmc = bitmap_get_counter(&bitmap->counts, node, offset, &blocks, 0);
 		if (!bmc) {
 			spin_unlock_irqrestore(&bitmap->counts.lock, flags);
 			return;
 		}
 
 		if (success && !bitmap->mddev->degraded &&
-		    bitmap->events_cleared < bitmap->mddev->events) {
-			bitmap->events_cleared = bitmap->mddev->events;
-			bitmap->need_sync = 1;
+		    info->events_cleared < bitmap->mddev->events) {
+			info->events_cleared = bitmap->mddev->events;
+			info->need_sync = 1;
 			sysfs_notify_dirent_safe(bitmap->sysfs_can_clear);
 		}
 
@@ -1536,7 +1538,7 @@ void bitmap_endwrite(struct bitmap *bitmap, sector_t offset, unsigned long secto
 
 		(*bmc)--;
 		if (*bmc <= 2) {
-			bitmap_set_pending(&bitmap->counts, offset);
+			bitmap_set_pending(&bitmap->counts, node, offset);
 			bitmap->allclean = 0;
 		}
 		spin_unlock_irqrestore(&bitmap->counts.lock, flags);
