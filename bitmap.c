@@ -2151,6 +2151,10 @@ int bitmap_load(struct mddev *mddev)
 	sector_t start = 0;
 	sector_t sector = 0;
 	struct bitmap *bitmap = mddev->bitmap;
+	int i;
+	struct list_head *pos;
+	int ret;
+	struct events_info *info;
 
 	if (!bitmap)
 		goto out;
@@ -2162,10 +2166,14 @@ int bitmap_load(struct mddev *mddev)
 	 */
 	while (sector < mddev->resync_max_sectors) {
 		sector_t blocks;
-		bitmap_start_sync(bitmap, sector, &blocks, 0);
+		if (bitmap->used != -1) {
+			bitmap_start_sync(bitmap, bitmap->used, sector, &blocks, 0);
+		}
 		sector += blocks;
 	}
-	bitmap_close_sync(bitmap);
+	if (btimap->used != -1) {
+		bitmap_close_sync(bitmap, bitmap->used);
+	}
 
 	if (mddev->degraded == 0
 	    || bitmap->events_cleared == mddev->events)
@@ -2180,6 +2188,10 @@ int bitmap_load(struct mddev *mddev)
 	if (err)
 		goto out;
 	clear_bit(BITMAP_STALE, &bitmap->flags);
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		info = &bitmap->events[i];
+		clear_bit(BITMAP_STALE, &info->flags);
+	}
 
 	/* Kick recovery in case any bits were set */
 	set_bit(MD_RECOVERY_NEEDED, &bitmap->mddev->recovery);
@@ -2191,6 +2203,39 @@ int bitmap_load(struct mddev *mddev)
 
 	if (test_bit(BITMAP_WRITE_ERROR, &bitmap->flags))
 		err = -EIO;
+	/* here, we start to do lock work
+	 * and choose one bitmap to use.
+	 */
+	pos = mddev->dlm_md_bitmap.next;
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		/* try unblock CR lock first. */
+		struct dlm_lock_resource *res;
+		res = list_entry(pos, struct dlm_lock_resource, list);
+		res->mode = DLM_LOCK_CR;
+		res->flags = DLM_LKF_NOQUEUE | DLM_LKF_PERSISTENT;
+		res->finished = 0;
+		ret = bitmap_lock_sync(res);
+		if (ret == -EAGAIN) {
+			/* already taken care of by someone else.
+			 * do async lock. */
+			res->mode = DLM_LOCK_CR;
+			res->flags = DLM_LKF_PERSISTENT;
+			memset(&res->lksb, 0, sizeof(struct dlm_lksb));
+			ret = bitmap_lock_async(res);
+			if (!ret) {
+				printk(KERN_WARNING "async lock for bitmap %s failed!\n",
+					res->name);
+			}
+		}
+		if (ret && ret != -EAGAIN) {
+			printk(KERN_WARNING "sync lock for bitmap %s failed!\n",
+				res->name);
+		}
+		pos = pos->next;
+		/* successfully locked. */
+		/* put all bitmap choose and resync determination into 
+		 * raid1d. */
+	}
 out:
 	return err;
 }
