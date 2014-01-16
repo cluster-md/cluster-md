@@ -2283,12 +2283,13 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 	 */
 	struct bitmap_storage store;
 	struct bitmap_counts old_counts;
-	unsigned long chunks;
+	unsigned long chunks, bitmap_len;
 	sector_t block;
 	sector_t old_blocks, new_blocks;
+	int node;
 	int chunkshift;
 	int ret = 0;
-	long pages;
+	long pages, all_pages;
 	struct bitmap_page *new_bp;
 
 	if (chunksize == 0) {
@@ -2321,17 +2322,31 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 	} else
 		chunkshift = ffz(~chunksize) - BITMAP_BLOCK_SHIFT;
 
+	/* chunks in bits */
 	chunks = DIV_ROUND_UP_SECTOR_T(blocks, 1 << chunkshift);
+	/* chunks in bytes */
+	bitmap_len = DIV_ROUND_UP_SECTOR_T(chunks, 8);
+	/* chunks plus per-node counter. 32 bytes*/
+	bitmap_len += PER_NODE_COUNTER;
+	/* round up to 4k. */
+	bitmap_len = DIV_ROUND_UP_SECTOR_T(bitmap_len, 4096);
+	bitmap_len *= 4096;
+	bitmap_len *= bitmap->mddev->bitmap_info.nodes;
+	/* in bits again. total bits for all bitmaps */
+	bitmap_len *= 8;
+	/* filemap pages we need. */
 	memset(&store, 0, sizeof(store));
 	if (bitmap->mddev->bitmap_info.offset || bitmap->mddev->bitmap_info.file)
-		ret = bitmap_storage_alloc(&store, chunks,
+		ret = bitmap_storage_alloc(&store, bitmap_len,
 					   !bitmap->mddev->bitmap_info.external);
 	if (ret)
 		goto err;
 
 	pages = DIV_ROUND_UP(chunks, PAGE_COUNTER_RATIO);
+	/* counters for all nodes */
+	all_pages = pages * bitmap->mddev->bitmap_info.nodes;
 
-	new_bp = kzalloc(pages * sizeof(*new_bp), GFP_KERNEL);
+	new_bp = kzalloc(all_pages * sizeof(*new_bp), GFP_KERNEL);
 	ret = -ENOMEM;
 	if (!new_bp) {
 		bitmap_file_unmap(&store);
@@ -2353,10 +2368,10 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 
 	old_counts = bitmap->counts;
 	bitmap->counts.bp = new_bp;
-	bitmap->counts.pages = pages;
-	bitmap->counts.missing_pages = pages;
+	bitmap->counts.pages = pages; /* pages per node. */
+	bitmap->counts.missing_pages = all_pages; /* all missing pages. */
 	bitmap->counts.chunkshift = chunkshift;
-	bitmap->counts.chunks = chunks;
+	bitmap->counts.chunks = chunks; /* this is per node chunks. */
 	bitmap->mddev->bitmap_info.chunksize = 1 << (chunkshift +
 						     BITMAP_BLOCK_SHIFT);
 
@@ -2364,44 +2379,47 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 		     chunks << chunkshift);
 
 	spin_lock_irq(&bitmap->counts.lock);
-	for (block = 0; block < blocks; ) {
-		bitmap_counter_t *bmc_old, *bmc_new;
-		int set;
+	/* iterate over all nodes counters. ?*/
+	for (node = 0; node < bitmap->mddev->bitmap_info.nodes; node++) {
+		for (block = 0; block < blocks; ) {
+			bitmap_counter_t *bmc_old, *bmc_new;
+			int set;
 
-		bmc_old = bitmap_get_counter(&old_counts, block,
-					     &old_blocks, 0);
-		set = bmc_old && NEEDED(*bmc_old);
+			bmc_old = bitmap_get_counter(&old_counts, node, block,
+						     &old_blocks, 0);
+			set = bmc_old && NEEDED(*bmc_old);
 
-		if (set) {
-			bmc_new = bitmap_get_counter(&bitmap->counts, block,
-						     &new_blocks, 1);
-			if (*bmc_new == 0) {
-				/* need to set on-disk bits too. */
-				sector_t end = block + new_blocks;
-				sector_t start = block >> chunkshift;
-				start <<= chunkshift;
-				while (start < end) {
-					bitmap_file_set_bit(bitmap, block);
-					start += 1 << chunkshift;
+			if (set) {
+				bmc_new = bitmap_get_counter(&bitmap->counts, node, block,
+							     &new_blocks, 1);
+				if (*bmc_new == 0) {
+					/* need to set on-disk bits too. */
+					sector_t end = block + new_blocks;
+					sector_t start = block >> chunkshift;
+					start <<= chunkshift;
+					while (start < end) {
+						bitmap_file_set_bit(bitmap, node, block);
+						start += 1 << chunkshift;
+					}
+					*bmc_new = 2;
+					bitmap_count_page(&bitmap->counts,
+							  node, block, 1);
+					bitmap_set_pending(&bitmap->counts,
+							   node, block);
 				}
-				*bmc_new = 2;
-				bitmap_count_page(&bitmap->counts,
-						  block, 1);
-				bitmap_set_pending(&bitmap->counts,
-						   block);
+				*bmc_new |= NEEDED_MASK;
+				if (new_blocks < old_blocks)
+					old_blocks = new_blocks;
 			}
-			*bmc_new |= NEEDED_MASK;
-			if (new_blocks < old_blocks)
-				old_blocks = new_blocks;
+			block += old_blocks;
 		}
-		block += old_blocks;
 	}
 
 	if (!init) {
 		int i;
 		while (block < (chunks << chunkshift)) {
 			bitmap_counter_t *bmc;
-			bmc = bitmap_get_counter(&bitmap->counts, block,
+			bmc = bitmap_get_counter(&bitmap->counts, bitmap->used, block,
 						 &new_blocks, 1);
 			if (bmc) {
 				/* new space.  It needs to be resynced, so
@@ -2410,9 +2428,9 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 				if (*bmc == 0) {
 					*bmc = NEEDED_MASK | 2;
 					bitmap_count_page(&bitmap->counts,
-							  block, 1);
+							  bitmap->used, block, 1);
 					bitmap_set_pending(&bitmap->counts,
-							   block);
+							   bitmap->used, block);
 				}
 			}
 			block += new_blocks;
