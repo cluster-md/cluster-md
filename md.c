@@ -8113,11 +8113,13 @@ no_add:
  */
 void md_check_recovery(struct mddev *mddev)
 {
+	int ret;
+
 	if (mddev->suspended)
 		return;
 
-	if (mddev->bitmap)
-		bitmap_daemon_work(mddev);
+	if (mddev->bitmap && mddev->bitmap->used != -1)
+		bitmap_daemon_work(mddev, bitmap->used);
 
 	if (signal_pending(current)) {
 		if (mddev->pers->sync_request && !mddev->external) {
@@ -8131,7 +8133,7 @@ void md_check_recovery(struct mddev *mddev)
 	if (mddev->ro && !test_bit(MD_RECOVERY_NEEDED, &mddev->recovery))
 		return;
 	if ( ! (
-		(mddev->flags & MD_UPDATE_SB_FLAGS & ~ (1<<MD_CHANGE_PENDING)) ||
+		(mddev->flags & ~ (1<<MD_CHANGE_PENDING)) ||
 		test_bit(MD_RECOVERY_NEEDED, &mddev->recovery) ||
 		test_bit(MD_RECOVERY_DONE, &mddev->recovery) ||
 		(mddev->external == 0 && mddev->safemode == 1) ||
@@ -8175,8 +8177,15 @@ void md_check_recovery(struct mddev *mddev)
 				sysfs_notify_dirent_safe(mddev->sysfs_state);
 		}
 
-		if (mddev->flags & MD_UPDATE_SB_FLAGS)
+		if (mddev->flags & MD_UPDATE_SB_FLAGS) {
 			md_update_sb(mddev, 0);
+			/* broadcast out METADATA UPDATED
+			 * message here. */
+			ret = md_send_metadat_update(mddev, 1);
+			if (!ret) {
+				printk(KERN_WARNING "send metadata update failed!\n");
+			}
+		}
 
 		if (test_bit(MD_RECOVERY_RUNNING, &mddev->recovery) &&
 		    !test_bit(MD_RECOVERY_DONE, &mddev->recovery)) {
