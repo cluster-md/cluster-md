@@ -1202,10 +1202,12 @@ void bitmap_write_all(struct bitmap *bitmap)
 }
 
 static void bitmap_count_page(struct bitmap_counts *bitmap,
-			      sector_t offset, int inc)
+			      int node, sector_t offset, int inc)
 {
 	sector_t chunk = offset >> bitmap->chunkshift;
 	unsigned long page = chunk >> PAGE_COUNTER_SHIFT;
+
+	page += (bitmap->pages * node);
 	bitmap->bp[page].count += inc;
 	bitmap_checkfree(bitmap, page);
 }
