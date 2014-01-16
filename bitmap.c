@@ -1226,7 +1226,7 @@ static void bitmap_set_pending(struct bitmap_counts *bitmap, int node, sector_t 
 		bp->pending = 1;
 }
 
-static bitmap_counter_t *bitmap_get_counter(struct bitmap_counts *bitmap,
+static bitmap_counter_t *bitmap_get_counter(struct bitmap_counts *bitmap, int node,
 					    sector_t offset, sector_t *blocks,
 					    int create);
 
@@ -1388,7 +1388,7 @@ void bitmap_daemon_work(struct mddev *mddev, int node)
 	mutex_unlock(&mddev->bitmap_info.mutex);
 }
 
-static bitmap_counter_t *bitmap_get_counter(struct bitmap_counts *bitmap,
+static bitmap_counter_t *bitmap_get_counter(struct bitmap_counts *bitmap, int node,
 					    sector_t offset, sector_t *blocks,
 					    int create)
 __releases(bitmap->lock)
@@ -1403,6 +1403,8 @@ __acquires(bitmap->lock)
 	unsigned long pageoff = (chunk & PAGE_COUNTER_MASK) << COUNTER_BYTE_SHIFT;
 	sector_t csize;
 	int err;
+
+	page = bitmap->pages * node + page;
 
 	err = bitmap_checkpage(bitmap, page, create);
 
