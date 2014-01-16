@@ -1634,7 +1634,7 @@ void bitmap_end_sync(struct bitmap *bitmap, int node, sector_t offset, sector_t 
 }
 EXPORT_SYMBOL(bitmap_end_sync);
 
-void bitmap_close_sync(struct bitmap *bitmap)
+void bitmap_close_sync(struct bitmap *bitmap, int node)
 {
 	/* Sync has finished, and any bitmap chunks that weren't synced
 	 * properly have been aborted.  It remains to us to clear the
@@ -1645,7 +1645,7 @@ void bitmap_close_sync(struct bitmap *bitmap)
 	if (!bitmap)
 		return;
 	while (sector < bitmap->mddev->resync_max_sectors) {
-		bitmap_end_sync(bitmap, sector, &blocks, 0);
+		bitmap_end_sync(bitmap, node, sector, &blocks, 0);
 		sector += blocks;
 	}
 }
