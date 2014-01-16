@@ -904,17 +904,17 @@ static inline int test_and_clear_page_attr(struct bitmap *bitmap, int pnum,
  * we set the bit immediately, then we record the page number so that
  * when an unplug occurs, we can flush the dirty pages out to disk
  */
-static void bitmap_file_set_bit(struct bitmap *bitmap, sector_t block)
+static void bitmap_file_set_bit(struct bitmap *bitmap, int node, sector_t block)
 {
 	unsigned long bit;
 	struct page *page;
 	void *kaddr;
 	unsigned long chunk = block >> bitmap->counts.chunkshift;
 
-	page = filemap_get_page(&bitmap->storage, chunk);
+	page = filemap_get_page(&bitmap->storage, node, chunk);
 	if (!page)
 		return;
-	bit = file_page_offset(&bitmap->storage, chunk);
+	bit = file_page_offset(&bitmap->storage, node, chunk);
 
 	/* set the bit */
 	kaddr = kmap_atomic(page);
