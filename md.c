@@ -6088,6 +6088,7 @@ static int hot_remove_disk(struct mddev * mddev, dev_t dev)
 {
 	char b[BDEVNAME_SIZE];
 	struct md_rdev *rdev;
+	int ret;
 
 	rdev = find_rdev(mddev, dev);
 	if (!rdev)
@@ -6101,6 +6102,10 @@ static int hot_remove_disk(struct mddev * mddev, dev_t dev)
 
 	kick_rdev_from_array(rdev);
 	md_update_sb(mddev, 1);
+	ret = md_send_metadat_update(mddev, 0);
+	if (!ret) {
+		printk(KERN_WARNING "send metadata update failed!\n");
+	}
 	md_new_event(mddev);
 
 	return 0;
