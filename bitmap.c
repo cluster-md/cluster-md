@@ -1823,8 +1823,15 @@ int bitmap_create(struct mddev *mddev)
 	struct file *file = mddev->bitmap_info.file;
 	int err;
 	struct sysfs_dirent *bm = NULL;
+	int i, j;
+	struct dlm_lock_resource *res;
+	char name[11]; /* bitmapxxxx */
 
-	BUILD_BUG_ON(sizeof(bitmap_super_t) != 256);
+	/* should be the right place to initialize
+	 * dlm lock bitmap resources
+	 */
+	
+	BUILD_BUG_ON(sizeof(bitmap_super_t) != 4096);
 
 	BUG_ON(file && mddev->bitmap_info.offset);
 
@@ -1837,6 +1844,7 @@ int bitmap_create(struct mddev *mddev)
 	init_waitqueue_head(&bitmap->write_wait);
 	init_waitqueue_head(&bitmap->overflow_wait);
 	init_waitqueue_head(&bitmap->behind_wait);
+	bitmap->used = -1;
 
 	bitmap->mddev = mddev;
 
@@ -1887,7 +1895,64 @@ int bitmap_create(struct mddev *mddev)
 	       bitmap->counts.pages, bmname(bitmap));
 
 	mddev->bitmap = bitmap;
-	return test_bit(BITMAP_WRITE_ERROR, &bitmap->flags) ? -EIO : 0;
+	if (test_bit(BITMAP_WRITE_ERROR, &bitmap->flags)) {
+		return -EIO;
+	}
+	
+	err = -ENOMEM;
+	mddev->avail_bitmap = kzalloc(mddev->bitmap_info.nodes * sizeof(int), GFP_KERNEL);
+	if (!mddev->avail_bitmap) {
+		goto error;
+	}
+
+	mddev->reclaim_bitmap = kzalloc(mddev->bitmap_info.nodes * sizeof(int), GFP_KERNEL);
+	if (!mddev->reclaim_bitmap) {
+		kfree(mddev->avail_bitmap);
+		mddev->avail_bitmap = NULL;
+		goto error;
+	}
+
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		mddev->avail_bitmap[i] = -1;
+		mddev->reclaim_bitmap[i] = -1;
+	}
+	
+	/* allocate event_info for each bitmap */
+	bitmap->events = kzalloc(sizeof(struct events_info) * mddev->bitmap_info.nodes,
+				GFP_KERNEL);
+	if (!bitmap->events) {
+		kfree(mddev->avail_bitmap);
+		kfree(mddev->reclaim_bitmap);
+		mddev->avail_bitmap = NULL;
+		mddev->reclaim_bitmap = NULL;
+		goto error;
+	}
+
+	/* now initialize bitmap lock resources. */
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		memset(name, 0, 11);
+		sprintf(name, "bitmap%4d", i);
+		res = init_lock_resource(mddev, name);
+		if (!res) {
+			while (!list_empty(&mddev->dlm_md_bitmap)) {
+				res = list_entry(mddev->dlm_md_bitmap.next,
+						struct dlm_lock_resource,
+						list);
+				list_del(&res->list);
+				deinit_lock_resource(res);
+			}
+			kfree(mddev->avail_bitmap);
+			kfree(mddev->reclaim_bitmap);
+			kfree(bitmap->events);
+			mddev->avail_bitmap = NULL;
+			mddev->reclaim_bitmap = NULL;
+			bitmap->events = NULL;
+			goto error;
+		}
+		res->index = i;
+		list_add_tail(&res->list, &mddev->dlm_md_bitmap);
+	}
+	err = 0;
 
  error:
 	bitmap_free(bitmap);
