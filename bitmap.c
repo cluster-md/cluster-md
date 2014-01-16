@@ -959,6 +959,7 @@ void bitmap_unplug(struct bitmap *bitmap)
 	unsigned long i;
 	int dirty, need_write;
 	int wait = 0;
+	int ret = -EAGAIN;
 
 	if (!bitmap || !bitmap->storage.filemap ||
 	    test_bit(BITMAP_STALE, &bitmap->flags))
@@ -966,7 +967,9 @@ void bitmap_unplug(struct bitmap *bitmap)
 
 	/* look at each page to see if there are any set bits that need to be
 	 * flushed out to disk */
-	for (i = 0; i < bitmap->storage.file_pages; i++) {
+	i = bitmap->used * bitmap->storage.per_node_pages + 1;
+	for (i = 0; i < ((bitmap->used + 1) * bitmap->storage.per_node_pages + 1); ) {
+		/* need to lock to write sb page? */
 		if (!bitmap->storage.filemap)
 			return;
 		dirty = test_and_clear_page_attr(bitmap, i, BITMAP_PAGE_DIRTY);
@@ -974,10 +977,26 @@ void bitmap_unplug(struct bitmap *bitmap)
 						      BITMAP_PAGE_NEEDWRITE);
 		if (dirty || need_write) {
 			clear_page_attr(bitmap, i, BITMAP_PAGE_PENDING);
+			if (!i) {
+				ret = md_lock_super(bitmap->mddev, DLM_LOCK_EX);
+				if (ret) {
+					printk(KERN_WARNING "lock super failed!\n");
+					break;
+				}
+			}
 			write_page(bitmap, bitmap->storage.filemap[i], 0);
+			if (!i) {
+				md_super_wait(bitmap->mddev);
+				md_unlock_super(bitmap->mddev);
+			}
 		}
 		if (dirty)
 			wait = 1;
+		if (!i) {
+			i = bitmap->used * bitmap->storage.per_node_pages + 1;
+		} else {
+			i++;
+		}
 	}
 	if (wait) { /* if any writes were performed, we need to wait on them */
 		if (bitmap->storage.file)
@@ -986,6 +1005,7 @@ void bitmap_unplug(struct bitmap *bitmap)
 		else
 			md_super_wait(bitmap->mddev);
 	}
+	/* need to write bitmap super too? */
 	if (test_bit(BITMAP_WRITE_ERROR, &bitmap->flags))
 		bitmap_file_kick(bitmap);
 }
