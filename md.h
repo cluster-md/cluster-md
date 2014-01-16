@@ -217,7 +217,52 @@ struct dlm_lock_resource {
 	struct mddev *mddev; /* pointing back to mddev. */
 };
 
+struct dlm_md_msg {
+	struct list_head list;
+	wait_queue_head_t waiter;
+	int async;
+	char *buf;
+	int len;
+};
+
+/* message types used in CRAID1 */
+
+
+
+#define METADATA_UPDATED	(0)
+#define RESYNC_FININSHED	(1)
+#define SUSPEND_RANGE		(2)
+#define MAX_MSG_LEN		(sizeof(struct msg_suspend))
 #define PER_NODE_COUNTER	(32)
+#define CLUSTER_MD_MSG_MIN	METADATA_UPDATED
+#define CLUSTER_MD_MSG_MAX	SUSPEND_RANGE
+
+struct msg_entry {
+	int type;
+	char buf[0];
+};
+
+struct msg_metadat_update {
+	int type;
+};
+
+struct msg_resync_finish {
+	int type;
+	int bitmap;
+};
+
+struct msg_suspend {
+	int type;
+	long long low;
+	long long high;
+};
+
+typedef int (*msg_handle)(struct mddev *mddev, struct msg_entry *entry);
+
+struct msg_handle_struct {
+	int type;
+	msg_handle handle;
+};
 
 struct mddev {
 	void				*private;
@@ -292,6 +337,12 @@ struct mddev {
 
 	struct md_thread		*thread;	/* management thread */
 	struct md_thread		*sync_thread;	/* doing resync or reconstruct */
+	struct md_thread		*recv_thread;   /* receving message from other nodes. */
+	struct msg_entry		*msg_recvd;
+	wait_queue_head_t		recv_wait;
+	struct md_thread		*send_thread;
+	struct list_head		send_list;
+	spinlock_t			send_lock;
 
 	/* 'last_sync_action' is initialized to "none".  It is set when a
 	 * sync operation (i.e "data-check", "requested-resync", "resync",
@@ -438,6 +489,8 @@ struct mddev {
 		int 			nodes; /* maximum number of nodes in cluster. */
 		int			external;
 	} bitmap_info;
+
+	wait_queue_head_t bitmap_wait;
 
 	/* dlm lock space and resources for clustered raid. */
 	dlm_lockspace_t *dlm_md_lockspace;

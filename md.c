@@ -528,6 +528,9 @@ void mddev_init(struct mddev *mddev)
 	mutex_init(&mddev->bitmap_info.mutex);
 	INIT_LIST_HEAD(&mddev->disks);
 	INIT_LIST_HEAD(&mddev->all_mddevs);
+	INIT_LIST_HEAD(&mddev->dlm_md_bitmap);
+	INIT_LIST_HEAD(&mddev->send_list);
+	spin_lock_init(&mddev->send_lock);
 	init_timer(&mddev->safemode_timer);
 	atomic_set(&mddev->active, 1);
 	atomic_set(&mddev->openers, 0);
@@ -536,6 +539,10 @@ void mddev_init(struct mddev *mddev)
 	atomic_set(&mddev->flush_pending, 0);
 	init_waitqueue_head(&mddev->sb_wait);
 	init_waitqueue_head(&mddev->recovery_wait);
+	init_waitqueue_head(&mddev->bitmap_wait);
+	mutex_init(&mddev->msg_mutex);
+	mutex_init(&mddev->avail_mutex);
+	mutex_init(&mddev->reclaim_mutex);
 	mddev->reshape_position = MaxSector;
 	mddev->reshape_backwards = 0;
 	mddev->last_sync_action = "none";
