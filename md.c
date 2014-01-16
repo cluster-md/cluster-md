@@ -7593,6 +7593,11 @@ void md_do_sync(struct md_thread *thread)
 	struct md_rdev *rdev;
 	char *desc, *action = NULL;
 	struct blk_plug plug;
+	int ret = -EAGAIN, i, ii;
+	struct dlm_lock_resource *res;
+	struct dlm_md_msg *msg;
+	struct msg_resync_finish *resync;
+	struct bitmap *bmp = mddev->bitmap;
 
 	/* just incase thread restarts... */
 	if (test_bit(MD_RECOVERY_DONE, &mddev->recovery))
@@ -7631,6 +7636,39 @@ void md_do_sync(struct md_thread *thread)
 	 * This will mean we have to start checking from the beginning again.
 	 *
 	 */
+	/* obtain EX on dlm_md_resync to make sure
+	 * only one node can do resync at the same time
+	 * also get PW lock on the avail_bitmaps 
+	 */
+	mddev->dlm_md_resync->finished = 0;
+	mddev->dlm_md_resync->mode = DLM_LOCK_EX;
+	memset(&mddev->dlm_md_resync->lksb, 0, sizeof(struct dlm_lksb));
+	ret = dlm_lock_sync(mddev->dlm_md_lockspace, mddev->dlm_md_resync);
+	if (!ret) {
+		return;
+	}
+	mutex_lock(&mddev->avail_mutex);
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		if (mddev->avail_bitmap[i] == -1) {
+			continue;
+		}
+		res = find_bitmap_by_node(mddev, mddev->avail_bitmap[i]);
+		res->mode = DLM_LOCK_PW;
+		res->finished = 0;
+		res->flags = DLM_LKF_CONVERT;
+		ret = bitmap_lock_sync(res);
+		if (!ret) {
+			ii = i - 1;
+			while (ii >= 0) {
+				res = find_bitmap_by_node(mddev, mddev->avail_bitmap[ii]);
+				bitmap_unlock_sync(res);
+				ii--;
+			}
+			dlm_unlock_sync(mddev->dlm_md_lockspace, mddev->dlm_md_resync);
+			return;
+		}
+	}
+		 
 
 	do {
 		mddev->curr_resync = 2;
@@ -7858,6 +7896,41 @@ void md_do_sync(struct md_thread *thread)
 		}
 	}
 	printk(KERN_INFO "md: %s: %s done.\n",mdname(mddev), desc);
+	/* resync finished. broadcast out resync -N finished message. */
+	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		if (mddev->avail_bitmap[i] == -1) {
+			continue;
+		}
+		msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
+		if (!msg) {
+			printk(KERN_WARNING "allocate memory for message failed!\n");
+			break;
+		}
+		INIT_LIST_HEAD(&msg->list);
+		init_waitqueue_head(&msg->waiter);
+		msg->sent = 0;
+		resync = kzalloc(sizeof(struct msg_resync_finish), GFP_KERNEL);
+		if (!resync) {
+			kfree(msg);
+			printk(KERN_WARNING "allocate memory for message failed!\n");
+			break;
+		}
+		msg->buf = resync;
+		resync->type = cpu_to_le32(RESYNC_FINISHED);
+		resync->bitmap = cpu_to_le32(mddev->avail_bitmap[i]);
+		msg->len = sizeof(struct msg_resync_finish);
+		spin_lock(&mddev->send_lock);
+		list_add_tail(&msg->list, &mddev->send_list);
+		spin_unlock(&mddev->send_lock);
+		md_wakeup_thread(mddev->send_thread);
+		wait_event(&msg->waiter, msg->sent != 0);
+		kfree(msg->buf);
+		kfree(msg);
+	}
+	/* may need to send out suspend message
+	 * with 0 - 0 range? 
+	 */
+	
 	/*
 	 * this also signals 'finished resyncing' to md_stop
 	 */
@@ -7901,6 +7974,38 @@ void md_do_sync(struct md_thread *thread)
 		}
 	}
  skip:
+ 	for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+		if (mddev->avail_bitmap[i] == -1) {
+			continue;
+		}
+		res = find_bitmap_by_node(mddev, mddev->avail_bitmap[i]);
+		res->mode = DLM_LOCK_CR;
+		res->finished = 0;
+		res->flags = DLM_LKF_CONVERT;
+		ret = bitmap_lock_sync(res);
+	}
+	dlm_unlock_sync(mddev->dlm_md_lockspace, mddev->dlm_md_resync);
+	/* choose one bitmap for our usage. */
+	if (bmp->used == -1) {
+		for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+			if (mddev->avail_bitmap[1] == -1) {
+				continue;
+			}
+			res = find_bitmap_by_node(mddev, mddev->avail_bitmap[i]);
+			res->mode = DLM_LOCK_EX;
+			res->finished = 0;
+			res->flags = DLM_LKF_CONVERT | DLM_LKF_NOQUEUE;
+			ret = bitmp_lock_sync(res);
+			if (!ret) {
+				bmp->used = mddev->avail_bitmap[i];
+				wake_up(&mddev->bitmap_wait);
+				/* exclude this from avail bitmaps? */
+				mddev->avail_bitmap[i] = -1;
+				break;
+			}
+		}
+	}
+	mutex_unlock(&mddev->avail_mutex);
 	set_bit(MD_CHANGE_DEVS, &mddev->flags);
 
 	if (!test_bit(MD_RECOVERY_INTR, &mddev->recovery)) {
