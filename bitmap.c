@@ -1788,6 +1788,21 @@ void bitmap_destroy(struct mddev *mddev)
 	mutex_lock(&mddev->bitmap_info.mutex);
 	mddev->bitmap = NULL; /* disconnect from the md device */
 	mutex_unlock(&mddev->bitmap_info.mutex);
+	if (mmdev->avail_bitmap) {
+		kfree(mddev->avail_bitmap);
+		mddev->avail_bitmap = NULL;
+	}
+
+	if (mddev->reclaim_bitmap) {
+		kfree(mddev->reclaim_bitmap);
+		mddev->recalim_bitmap = NULL;
+	}
+
+	if (bitmap->events) {
+		kfree(bitmap->events);
+		bitmap->events = NULL;
+	}
+
 	if (mddev->thread)
 		mddev->thread->timeout = MAX_SCHEDULE_TIMEOUT;
 
