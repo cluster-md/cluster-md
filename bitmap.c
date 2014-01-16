@@ -1706,14 +1706,14 @@ static void bitmap_set_memory_bits(struct bitmap *bitmap, int node, sector_t off
 }
 
 /* dirty the memory and file bits for bitmap chunks "s" to "e" */
-void bitmap_dirty_bits(struct bitmap *bitmap, unsigned long s, unsigned long e)
+void bitmap_dirty_bits(struct bitmap *bitmap, int node, unsigned long s, unsigned long e)
 {
 	unsigned long chunk;
 
 	for (chunk = s; chunk <= e; chunk++) {
 		sector_t sec = (sector_t)chunk << bitmap->counts.chunkshift;
-		bitmap_set_memory_bits(bitmap, sec, 1);
-		bitmap_file_set_bit(bitmap, sec);
+		bitmap_set_memory_bits(bitmap, node, sec, 1);
+		bitmap_file_set_bit(bitmap, node, sec);
 		if (sec < bitmap->mddev->recovery_cp)
 			/* We are asserting that the array is dirty,
 			 * so move the recovery_cp address back so
