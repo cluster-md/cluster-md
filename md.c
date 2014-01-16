@@ -5482,6 +5482,8 @@ static void md_clean(struct mddev *mddev)
 
 static void __md_stop_writes(struct mddev *mddev)
 {
+	int ret;
+
 	set_bit(MD_RECOVERY_FROZEN, &mddev->recovery);
 	if (mddev->sync_thread) {
 		set_bit(MD_RECOVERY_INTR, &mddev->recovery);
@@ -5498,6 +5500,10 @@ static void __md_stop_writes(struct mddev *mddev)
 		/* mark array as shutdown cleanly */
 		mddev->in_sync = 1;
 		md_update_sb(mddev, 1);
+		ret = md_send_metadat_update(mddev, 0);
+		if (!ret) {
+			printk(KERN_WARNING "send metadata update failed!\n");
+		}
 	}
 }
 
