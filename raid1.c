@@ -3073,7 +3073,47 @@ static int run(struct mddev *mddev)
 
 	ret =  md_integrity_register(mddev);
 	if (ret)
-		stop(mddev);
+		goto recv_failed;
+	ret = -ENOMEM;
+	mddev->recv_thread = md_register_thread(raid1_recvd, mddev, "raid1_recvd");
+	if (!mddev->recv_thread) {
+		printk(KERN_ERR "cannot allocate memory for recv_thread!\n");
+		goto recv_failed;
+	}
+	mddev->send_thread = md_register_thread(raid1_sendd, mddev, "raid1_sendd");
+	if (!mddev->send_thread) {
+		printk(KERN_ERR "cannot allocate memory for send_thread!\n");
+		goto recv_failed;
+	}
+	/* prepare all dlm lock resources here except bitmap resources. */
+	mddev->dlm_md_resync = init_lock_resource(mddev, "resync");
+	if (!mddev->dlm_md_resync) 
+		goto recv_failed;
+	mddev->dlm_md_message = init_lock_resource(mddev, "message");
+	if (!mddev->dlm_md_message)
+		goto message_failed;
+	mmddev->dlm_md_message->lksb.sb_lvbptr = kzalloc(32, GFP_KERNEL);
+	if (!mddev->dlm_md_message->lksb.sb_lvbptr)
+		goto message_failed;
+	mddev->dlm_md_idle = init_lock_resource(mddev, "idle");
+	if (!mddev->dlm_md_idle)
+		goto idle_failed;
+	mddev->dlm_md_ack = init_lock_resource(mddev, "ack");
+	if (!mddev->dlm_md_ack)
+		goto ack_failed;
+	/* wake up recev thread. */
+	return ret;
+ack_failed:
+	deinit_lock_resource(mddev->dlm_md_idle);
+	mddev->dlm_md_idle = NULL;
+idle_failed:
+	deinit_lock_resource(mddev->dlm_md_message);
+	mddev->dlm_md_message = NULL;
+message_failed:
+	deinit_lock_resource(mddev->dlm_md_resync);
+	mddev->dlm_md_resync = NULL;
+recv_failed:
+	stop(mddev);
 	return ret;
 }
 
@@ -3095,6 +3135,23 @@ static int stop(struct mddev *mddev)
 	lower_barrier(conf);
 
 	md_unregister_thread(&mddev->thread);
+	md_unregister_thread(&mddev->recv_thread);
+	md_unregister_thread(&mddev->send_thread);
+	deinit_lock_resource(mddev->dlm_md_resync);
+	deinit_lock_resource(mddev->dlm_md_message);
+	deinit_lock_resource(mddev->dlm_md_idle);
+	deinit_lock_resource(mddev->dlm_md_ack);
+	mddev->dlm_md_resync = NULL;
+	mddev->dlm_md_message = NULL;
+	mddev->dlm_md_idle = NULL;
+	mddev->dlm_md_ack = NULL;
+	while (!list_empty(&mddev->dlm_md_bitmap)) {
+		struct dlm_lock_resource *pos;
+		pos = list_entry(mddev->dlm_md_bitmap.next, struct dlm_lock_resource,
+				list);
+		list_del(&pos->list);
+		deinit_lock_resource(pos);
+	}
 	if (conf->r1bio_pool)
 		mempool_destroy(conf->r1bio_pool);
 	kfree(conf->mirrors);
