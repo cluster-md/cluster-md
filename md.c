@@ -4186,12 +4186,17 @@ size_store(struct mddev *mddev, const char *buf, size_t len)
 	 */
 	sector_t sectors;
 	int err = strict_blocks_to_sectors(buf, &sectors);
+	int ret;
 
 	if (err < 0)
 		return err;
 	if (mddev->pers) {
 		err = update_size(mddev, sectors);
 		md_update_sb(mddev, 1);
+		ret = md_send_metadat_update(mddev, 0);
+		if (!ret) {
+			printk(KERN_WARNING "send metadata update failed!\n");
+		}
 	} else {
 		if (mddev->dev_sectors == 0 ||
 		    mddev->dev_sectors > sectors)
