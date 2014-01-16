@@ -8918,6 +8918,22 @@ static int __init md_init(void)
 	register_reboot_notifier(&md_notifier);
 	raid_table_header = register_sysctl_table(raid_root_table);
 
+	ret = dlm_new_lockspace("md-cluster", NULL, DLM_LSFL_FS, 32, NULL, NULL, NULL, 
+			&md_lockspace);
+	if (ret) {
+		goto err_mdp;
+	}
+	sb_lock = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
+	if (!sb_lock) {
+		dlm_release_lockspace(md_lockspace, 3);
+		goto err_mdp;
+	}
+	INIT_LIST_HEAD(&sb_lock->list);
+	init_waitqueue_head(&sb_lock->waiter);
+	sb_lock->name = "cmd-super";
+	sb_lock->namelen = strlen("cmd-super");
+	mutex_init(&sb_mutex);
+
 	md_geninit();
 	return 0;
 
@@ -9108,6 +9124,8 @@ static __exit void md_exit(void)
 	}
 	destroy_workqueue(md_misc_wq);
 	destroy_workqueue(md_wq);
+	dlm_release_lockspace(md_lockspace, 3);
+	kfree(sb_lock);
 }
 
 subsys_initcall(md_init);
