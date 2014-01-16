@@ -6434,6 +6434,7 @@ static int update_array_info(struct mddev *mddev, mdu_array_info_t *info)
 	int rv = 0;
 	int cnt = 0;
 	int state = 0;
+	int ret;
 
 	/* calculate expected state,ignoring low bits */
 	if (mddev->bitmap && mddev->bitmap_info.offset)
@@ -6521,6 +6522,10 @@ static int update_array_info(struct mddev *mddev, mdu_array_info_t *info)
 		}
 	}
 	md_update_sb(mddev, 1);
+	ret = md_send_metadat_update(mddev, 0);
+	if (!ret) {
+		printk(KERN_WARNING "send metadata update failed!\n");
+	}
 	return rv;
 }
 
