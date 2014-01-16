@@ -1279,7 +1279,14 @@ read_again:
 			    !waitqueue_active(&bitmap->behind_wait))
 				alloc_behind_pages(mbio, r1_bio);
 
-			bitmap_startwrite(bitmap, r1_bio->sector,
+			/* may wait for bitmap selection complete
+			 * here
+			 * */
+
+			if (bitmap->used == -1) {
+				wait_event(&mddev->bitmap_wait, bitmap->used != -1);
+			}
+			bitmap_startwrite(bitmap, bitmap->used, r1_bio->sector,
 					  r1_bio->sectors,
 					  test_bit(R1BIO_BehindIO,
 						   &r1_bio->state));
