@@ -928,17 +928,17 @@ static void bitmap_file_set_bit(struct bitmap *bitmap, int node, sector_t block)
 	set_page_attr(bitmap, page->index, BITMAP_PAGE_DIRTY);
 }
 
-static void bitmap_file_clear_bit(struct bitmap *bitmap, sector_t block)
+static void bitmap_file_clear_bit(struct bitmap *bitmap, int node, sector_t block)
 {
 	unsigned long bit;
 	struct page *page;
 	void *paddr;
 	unsigned long chunk = block >> bitmap->counts.chunkshift;
 
-	page = filemap_get_page(&bitmap->storage, chunk);
+	page = filemap_get_page(&bitmap->storage, node, chunk);
 	if (!page)
 		return;
-	bit = file_page_offset(&bitmap->storage, chunk);
+	bit = file_page_offset(&bitmap->storage, node, chunk);
 	paddr = kmap_atomic(page);
 	if (test_bit(BITMAP_HOSTENDIAN, &bitmap->flags))
 		clear_bit(bit, paddr);
