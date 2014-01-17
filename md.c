@@ -2743,7 +2743,7 @@ state_store(struct md_rdev *rdev, const char *buf, size_t len)
 			kick_rdev_from_array(rdev);
 			if (mddev->pers) {
 				md_update_sb(mddev, 1);
-				ret = md_send_metadat_update(mddev, 0);
+				ret = md_send_metadata_update(mddev, 0);
 				if (!ret) {
 					printk(KERN_WARNING "send metadata update failed!\n");
 				}
@@ -4193,7 +4193,7 @@ size_store(struct mddev *mddev, const char *buf, size_t len)
 	if (mddev->pers) {
 		err = update_size(mddev, sectors);
 		md_update_sb(mddev, 1);
-		ret = md_send_metadat_update(mddev, 0);
+		ret = md_send_metadata_update(mddev, 0);
 		if (!ret) {
 			printk(KERN_WARNING "send metadata update failed!\n");
 		}
@@ -5240,7 +5240,7 @@ int md_run(struct mddev *mddev)
 		 * later when sen thread is wake up, message 
 		 * will be sent out
 		 */
-		ret = md_send_metadat_update(mddev, 1);
+		ret = md_send_metadata_update(mddev, 1);
 		if (!ret) {
 			printk(KERN_WARNING "send metadata update failed!\n");
 		}
@@ -5500,7 +5500,7 @@ static void __md_stop_writes(struct mddev *mddev)
 		/* mark array as shutdown cleanly */
 		mddev->in_sync = 1;
 		md_update_sb(mddev, 1);
-		ret = md_send_metadat_update(mddev, 0);
+		ret = md_send_metadata_update(mddev, 0);
 		if (!ret) {
 			printk(KERN_WARNING "send metadata update failed!\n");
 		}
@@ -6102,7 +6102,7 @@ static int hot_remove_disk(struct mddev * mddev, dev_t dev)
 
 	kick_rdev_from_array(rdev);
 	md_update_sb(mddev, 1);
-	ret = md_send_metadat_update(mddev, 0);
+	ret = md_send_metadata_update(mddev, 0);
 	if (!ret) {
 		printk(KERN_WARNING "send metadata update failed!\n");
 	}
@@ -6175,7 +6175,7 @@ static int hot_add_disk(struct mddev * mddev, dev_t dev)
 	rdev->raid_disk = -1;
 
 	md_update_sb(mddev, 1);
-	ret = md_send_metadat_update(mddev, 0);
+	ret = md_send_metadata_update(mddev, 0);
 	if (!ret) {
 		printk(KERN_WARNING "send metadata update failed!\n");
 	}
@@ -6522,7 +6522,7 @@ static int update_array_info(struct mddev *mddev, mdu_array_info_t *info)
 		}
 	}
 	md_update_sb(mddev, 1);
-	ret = md_send_metadat_update(mddev, 0);
+	ret = md_send_metadata_update(mddev, 0);
 	if (!ret) {
 		printk(KERN_WARNING "send metadata update failed!\n");
 	}
@@ -7558,7 +7558,7 @@ int md_allow_write(struct mddev *mddev)
 			mddev->safemode = 1;
 		spin_unlock_irq(&mddev->write_lock);
 		md_update_sb(mddev, 0);
-		ret = md_send_metadat_update(mddev, 1);
+		ret = md_send_metadata_update(mddev, 1);
 		if (!ret) {
 			printk(KERN_WARNING "send metadata update failed!\n");
 		}
@@ -8181,7 +8181,7 @@ void md_check_recovery(struct mddev *mddev)
 			md_update_sb(mddev, 0);
 			/* broadcast out METADATA UPDATED
 			 * message here. */
-			ret = md_send_metadat_update(mddev, 1);
+			ret = md_send_metadata_update(mddev, 1);
 			if (!ret) {
 				printk(KERN_WARNING "send metadata update failed!\n");
 			}
@@ -8310,7 +8310,7 @@ void md_reap_sync_thread(struct mddev *mddev)
 			rdev->saved_raid_disk = -1;
 
 	md_update_sb(mddev, 1);
-	ret = md_send_metadat_update(mddev, 1);
+	ret = md_send_metadata_update(mddev, 1);
 	if (!ret) {
 		printk(KERN_WARNING "send metadata update failed!\n");
 	}
