@@ -2332,7 +2332,7 @@ static void raid1d(struct md_thread *thread)
 	mutex_lock(&mddev->avail_mutex);
 	if (bmp->used == -1) {
 		for (i = 0; i < mddev->bitmap_info.nodes; i++) {
-			if (mddev->avail_bitmap[1] == -1) {
+			if (mddev->avail_bitmap[i] == -1) {
 				continue;
 			}
 			res = find_bitmap_by_node(mddev, mddev->avail_bitmap[i]);

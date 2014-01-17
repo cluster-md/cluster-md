@@ -7,13 +7,13 @@
 
 # process
 
-0. receive status
+1. receive status
 
    sender                                         receiver                   receiver
    ACK:CR                                         ACK:CR                     ACK:CR
 
 
-1. sender get EX of TOKEN
+2. sender get EX of TOKEN
 
    sender                                         receiver                   receiver
    TOKEN:EX                                       ACK:CR                     ACK:CR
@@ -38,7 +38,7 @@
    MESSAGE:CR
    ACK:EX
 
-5. sender down-convert ACK from EX to CR          
+4. sender down-convert ACK from EX to CR          
    sender release MESSAGE
    sender release TOKEN
                                                   receiver release MESSAGE
