@@ -1,0 +1,49 @@
+# locks
+  the previous message passing is too complex. so change
+  it into this:
+
+  Three locks are required.
+  TOKEN, MESSAGE, ACK
+
+# process
+
+0. receive status
+
+   sender                                         receiver                   receiver
+   ACK:CR                                         ACK:CR                     ACK:CR
+
+
+1. sender get EX of TOKEN
+
+   sender                                         receiver                   receiver
+   TOKEN:EX                                       ACK:CR                     ACK:CR
+   MESSAGE:EX
+   ACK:CR
+
+
+3. sender write LVB.
+   sender down-convert MESSAGE from EX to CR
+   sender try to get EX of ACK
+   [ wait until all receiver has *processed* the MESSAGE ]
+
+                                                           [ triggered by bast of ACK ]
+                                                           receiver get CR of MESSAGE
+                                                           receiver read LVB
+                                                           receiver *processed* the LVB
+							   [ wait finish ]
+                                                           receiver release ACK
+
+   sender                                         receiver                   receiver
+   TOKEN:EX                                       MESSAGE:CR                 MESSAGE:CR
+   MESSAGE:CR
+   ACK:EX
+
+5. sender down-convert ACK from EX to CR          
+   sender release MESSAGE
+   sender release TOKEN
+                                                  receiver release MESSAGE
+                                                  receiver get CR of ACK
+
+   sender                                         receiver                   receiver
+   ACK:CR                                         ACK:CR                     ACK:CR
+
