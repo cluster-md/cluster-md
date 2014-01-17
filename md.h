@@ -215,6 +215,7 @@ struct dlm_lock_resource {
 	struct dlm_lksb lksb;
 	uint32_t parent_lkid;
 	struct mddev *mddev; /* pointing back to mddev. */
+	void *bast(void *arg); /*bast for sync lock*/
 };
 
 struct dlm_md_msg {
@@ -242,19 +243,11 @@ struct msg_entry {
 	char buf[0];
 };
 
-struct msg_metadat_update {
-	int type;
-};
-
-struct msg_resync_finish {
+struct cluster_msg {
 	int type;
 	int bitmap;
-};
-
-struct msg_suspend {
-	int type;
-	long long low;
-	long long high;
+	unsigned long long low;
+	unsigned long long high;
 };
 
 typedef int (*msg_handle)(struct mddev *mddev, struct msg_entry *entry);
@@ -721,4 +714,7 @@ static inline int mddev_check_plugged(struct mddev *mddev)
 	return !!blk_check_plugged(md_unplug, mddev,
 				   sizeof(struct blk_plug_cb));
 }
+
+extern int dlm_lock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
+extern int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
 #endif /* _MD_MD_H */

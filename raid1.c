@@ -2986,6 +2986,145 @@ static void deinit_lock_resource(struct dlm_lock_resource *res)
 	return;
 }
 
+/*
+ * thread for receiving message
+ * */
+static void raid1_recvd(struct md_thread *thread)
+{
+	struct mddev *mddev = thread->mddev;
+	struct dlm_lock_resource *ack = mddev->dlm_md_ack;
+	struct dlm_lock_resource *message = mddev->dlm_md_message;
+	struct cluster_msg *msg;
+	struct msg_entry *entry;
+
+	/*get CR on Message*/
+	message->state = 0;
+	message->mode = DLM_LOCK_CR;
+	message->flags = DLM_LKF_VALBLK;
+	message->parent_id = 0;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
+		printk(KERN_ERR "md/raid1:failed to get CR on MESSAGE\n");
+		return;
+	}
+
+	//read lvb and wake up thread to process this message
+	entry = kzalloc(sizeof(struct msg_entry) + sizeof(struct cluster_msg), GFP_KERNEL); 
+	if (!entry) {
+		printk(KERN_ERR "md/raid1:failed to alloc mem\n");
+		return -ENOMEM;
+	}
+	memcpy(entry->buf, message->lksb.sb_lvbptr, sizeof(struct cluster_msg));
+	msg = (struct cluster_msg *) entry->buf;
+	entry->type = msg->type;
+	mddev->msg_recvd = entry;
+	md_wakeup_thread(mddev->thread);
+	wait_event_interruptible(&mddev->recv_wait, mddev->msg_recvd == NULL);
+
+	/*release CR on ack*/
+	dlm_unlock_sync(mddev->dlm_md_lockspace, ack);
+	/*release CR on message*/
+	dlm_unlock_sync(mddev->dlm_md_lockspace, message);
+	/*get CR on ack again*/
+	ack->state = 0;
+	ack->mode = DLM_LOCK_CR;
+	ack->flags = 0;
+	ack->bast = wait_for_receive_message;
+	ack->parent_id = 0;
+	dlm_lock_sync(mddev->dlm_md_lockspace, ack);
+}
+
+/*
+ * wake up recv thread here
+ * */
+static void wait_for_receive_message(void *arg)
+{
+	struct dlm_lock_resource *res = (struct dlm_lock_resource *)arg;
+	struct mddev *mddev = res->mddev;
+	md_wakeup_thread(mddev->recv_thread);
+}
+
+/*
+ * thread for sending message
+ * QUSTION: whether process message in the send_list in a loop?
+ * */
+static void raid1_sendd(struct md_thread *thread)
+{
+	struct mddev *mddev = thread->mddev;
+	struct dlm_lock_resource *ack = mddev->dlm_md_ack;
+	struct dlm_lock_resource *message = mddev->dlm_md_message;
+	struct dlm_lock_resource *token = mddev->dlm_md_token;
+	struct dlm_md_msg *msg;
+
+	if (list_empty(mddev->send_list)) {
+		printk(KERN_ERR "md/raid1:mddev->send_list is empty \n");
+		return;
+	}
+
+	/*Get EX on Token*/
+	token->state = 0;
+	token->mode = DLM_LOCK_EX;
+	token->flags = 0;
+	token->parent_id = 0;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, token)) {
+		printk(KERN_ERR "md/raid1:failed to get EX on TOKEN\n");
+		return;
+	}
+
+	msg = list_entry(mddev->send_list.next,
+			struct dlm_md_msg,
+			list);
+
+
+	/*get EX on Message*/
+	message->state = 0;
+	message->mode = DLM_LOCK_EX;
+	message->flags = 0;
+	message->parent_id = 0;
+	message->bast = NULL;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
+		printk(KERN_ERR "md/raid1:failed to get EX on MESSAGE\n");
+		goto failed_message;
+	}
+
+	/*down-convert EX to CR on Message*/
+	message->mode = DLM_LOCK_CR;
+	message->flags = DLM_LKF_CONVERT|DLM_LKF_VALBLK;
+	memcpy(&message->lksb.sb_lvbptr, msg->buf, sizeof(struct cluster_msg));
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
+		printk(KERN_ERR "md/raid1:failed to convert EX to CR on MESSAGE\n");
+		goto failed_message;
+	}
+
+	/*up-convert CR to EX on Ack*/
+	ack->state = 0;
+	ack->mode = DLM_LOCK_EX;
+	ack->flags = DLM_LKF_CONVERT;
+	ack->parent_id = 0;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, ack)) {
+		printk(KERN_ERR "md/raid1:failed to convert CR to EX on ACK\n");
+		goto failed_ack;
+	}
+
+	/*down-convert EX to CR on Ack*/
+	ack->mode = DLM_LOCK_CR;
+	ack->flags = DLM_LKF_CONVERT;
+	ack->bast = wait_for_receive_message;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, ack)) {
+		printk(KERN_ERR "md/raid1:failed to convert EX to CR on ACK\n");
+		goto failed_ack;
+	}
+
+	msg->sent = 1;
+	wake_up(msg->waiter);
+	list_del(msg->list);
+	dlm_unlock_sync(mddev->dlm_md_lockspace, ack);
+failed_ack:
+	dlm_unlock_sync(mddev->dlm_md_lockspace, message);
+failed_message:
+	dlm_unlock_sync(mddev->dlm_md_lockspace, token);
+}
+
+
 static int stop(struct mddev *mddev);
 static int run(struct mddev *mddev)
 {
@@ -2994,6 +3133,7 @@ static int run(struct mddev *mddev)
 	struct md_rdev *rdev;
 	int ret;
 	bool discard_supported = false;
+	dlm_lock_resource *res = NULL;
 
 	if (mddev->level != 1) {
 		printk(KERN_ERR "md/raid1:%s: raid level not set to mirroring (%d)\n",
@@ -3101,7 +3241,17 @@ static int run(struct mddev *mddev)
 	mddev->dlm_md_ack = init_lock_resource(mddev, "ack");
 	if (!mddev->dlm_md_ack)
 		goto ack_failed;
-	/* wake up recev thread. */
+	/* get sync CR lock on ACK. */
+	res = mddev->dlm_md_ack;
+	res->finished = 0;
+	res->mode = DLM_LOCK_CR;
+	res->flags = DLM_LKF_NOQUEUE;
+	res->parent_id = 0;
+	res->state = 0;
+	res->bast = wait_for_receive_message;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, res)) {
+		printk(KERN_ERR "failed to get a sync CR lock on ACK!\n");
+	}
 	return ret;
 ack_failed:
 	deinit_lock_resource(mddev->dlm_md_token);
@@ -3134,6 +3284,7 @@ static int stop(struct mddev *mddev)
 	raise_barrier(conf);
 	lower_barrier(conf);
 
+	dlm_unlock_sync(mddev->dlm_md_lockspace, mddev->dlm_md_message);
 	md_unregister_thread(&mddev->thread);
 	md_unregister_thread(&mddev->recv_thread);
 	md_unregister_thread(&mddev->send_thread);

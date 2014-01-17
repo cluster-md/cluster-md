@@ -5258,7 +5258,7 @@ EXPORT_SYMBOL_GPL(md_run);
 int md_send_metadata_update(struct mddev *mddev, int async)
 {
 	struct dlm_md_msg *msg;
-	struct msg_metadata_update *tmp;
+	struct cluster_msg *update;
 	/* super block updated. 
 	 * Should prepare message to the send thread
 	 * later when sen thread is wake up, message 
@@ -5272,16 +5272,15 @@ int md_send_metadata_update(struct mddev *mddev, int async)
 	INIT_LIST_HEAD(&msg->list);
 	init_waitqueue_head(&msg->waiter);
 	msg->sent = 0;
-	msg->buf = kzalloc(4, GFP_KERNEL);
+	msg->buf = kzalloc(sizeof(struct cluster_msg), GFP_KERNEL);
 	if (!msg->buf) {
 		printk(KERN_WARNING "alloc memory for msg failed!\n");
 		kfree(msg);
 		return -ENOMEM;
 	}
-	msg->len = 4;
 	msg->async = async;
-	tmp = (struct msg_metadata_update *)msg->buf;
-	tmp->type = cpu_to_le32(METADATA_UPDATED);
+	update = (struct cluster_msg *)msg->buf;
+	update->type = cpu_to_le32(METADATA_UPDATED);
 	spin_lock(&mddev->send_lock);
 	list_add_tail(&msg->list, &mddev->send_list);
 	spin_unlock(&mddev->send_lock);
@@ -5297,7 +5296,7 @@ int md_send_metadata_update(struct mddev *mddev, int async)
 int md_send_resync_finished(struct mddev *mddev, int bmpno)
 {
 	struct dlm_md_msg *msg;
-	struct msg_resync_finish *resync;
+	struct cluster_msg *resync;
 	msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
 	if (!msg) {
 		printk(KERN_WARNING "allocate memory for message failed!\n");
@@ -5306,7 +5305,7 @@ int md_send_resync_finished(struct mddev *mddev, int bmpno)
 	INIT_LIST_HEAD(&msg->list);
 	init_waitqueue_head(&msg->waiter);
 	msg->sent = 0;
-	resync = kzalloc(sizeof(struct msg_resync_finish), GFP_KERNEL);
+	resync = kzalloc(sizeof(struct cluster_msg), GFP_KERNEL);
 	if (!resync) {
 		kfree(msg);
 		printk(KERN_WARNING "allocate memory for message failed!\n");
@@ -5315,7 +5314,6 @@ int md_send_resync_finished(struct mddev *mddev, int bmpno)
 	msg->buf = resync;
 	resync->type = cpu_to_le32(RESYNC_FINISHED);
 	resync->bitmap = cpu_to_le32(bmpno);
-	msg->len = sizeof(struct msg_resync_finish);
 	spin_lock(&mddev->send_lock);
 	list_add_tail(&msg->list, &mddev->send_list);
 	spin_unlock(&mddev->send_lock);
@@ -5329,22 +5327,22 @@ int md_send_resync_finished(struct mddev *mddev, int bmpno)
 int md_send_suspend(struct mddev *mddev, long long sus_start, long long sus_end)
 {
 	struct dlm_md_msg *msg;
-	struct msg_suspend *suspend;
+	struct cluster_msg *suspend;
 	msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
 	if (!msg) {
 		return -ENOMEM;
 	}
-	msg->buf = kzalloc(sizeof(struct msg_suspend), GFP_KERNEL);
+	msg->buf = kzalloc(sizeof(struct cluster_msg), GFP_KERNEL);
 	if (!msg->buf) {
 		kfree(msg);
 		return -ENOMEM;
 	}
 
-	suspend = (struct msg_suspend *)msg->buf;
+	suspend = (struct cluster_msg*)msg->buf;
 	suspend->type = cpu_to_le32(SUSPEND_RANGE);
 	suspend->low = cpu_to_le64(sus_start);
 	suspend->high = cpu_to_le64(sus_end);
-	msg->len = sizeof(struct msg_suspend);
+	msg->len = sizeof(struct );
 	INIT_LIST_HEAD(&msg->list);
 	init_waitqueue_head(&msg->waiter);
 	msg->sent = 0;
@@ -8964,7 +8962,7 @@ int dlm_lock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 	res->finished = 0;
 	ret = dlm_lock(ls, res->mode, &res->lksb,
 			res->flags, res->name, res->namelen,
-			res->parent_lkid, sync_ast, res, NULL);
+			res->parent_lkid, sync_ast, res, res->bast);
 	if (ret) {
 		return ret;
 	}
