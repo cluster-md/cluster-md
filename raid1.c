@@ -3095,18 +3095,18 @@ static int run(struct mddev *mddev)
 	mmddev->dlm_md_message->lksb.sb_lvbptr = kzalloc(32, GFP_KERNEL);
 	if (!mddev->dlm_md_message->lksb.sb_lvbptr)
 		goto message_failed;
-	mddev->dlm_md_idle = init_lock_resource(mddev, "idle");
-	if (!mddev->dlm_md_idle)
-		goto idle_failed;
+	mddev->dlm_md_token = init_lock_resource(mddev, "token");
+	if (!mddev->dlm_md_token)
+		goto token_failed;
 	mddev->dlm_md_ack = init_lock_resource(mddev, "ack");
 	if (!mddev->dlm_md_ack)
 		goto ack_failed;
 	/* wake up recev thread. */
 	return ret;
 ack_failed:
-	deinit_lock_resource(mddev->dlm_md_idle);
-	mddev->dlm_md_idle = NULL;
-idle_failed:
+	deinit_lock_resource(mddev->dlm_md_token);
+	mddev->dlm_md_token = NULL;
+token_failed:
 	deinit_lock_resource(mddev->dlm_md_message);
 	mddev->dlm_md_message = NULL;
 message_failed:
@@ -3139,11 +3139,11 @@ static int stop(struct mddev *mddev)
 	md_unregister_thread(&mddev->send_thread);
 	deinit_lock_resource(mddev->dlm_md_resync);
 	deinit_lock_resource(mddev->dlm_md_message);
-	deinit_lock_resource(mddev->dlm_md_idle);
+	deinit_lock_resource(mddev->dlm_md_token);
 	deinit_lock_resource(mddev->dlm_md_ack);
 	mddev->dlm_md_resync = NULL;
 	mddev->dlm_md_message = NULL;
-	mddev->dlm_md_idle = NULL;
+	mddev->dlm_md_token = NULL;
 	mddev->dlm_md_ack = NULL;
 	while (!list_empty(&mddev->dlm_md_bitmap)) {
 		struct dlm_lock_resource *pos;

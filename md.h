@@ -502,7 +502,7 @@ struct mddev {
 
 	/* 3 resources for message passing. */
 	struct dlm_lock_resource *dlm_md_message;
-	struct dlm_lock_resource *dlm_md_idle;
+	struct dlm_lock_resource *dlm_md_token;
 	struct dlm_lock_resource *dlm_md_ack;
 
 	/* linked list for bitmap resources. */
