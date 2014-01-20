@@ -1013,6 +1013,7 @@ static void make_request(struct mddev *mddev, struct bio * bio)
 	int first_clone;
 	int sectors_handled;
 	int max_sectors;
+	struct suspend_range_list *suspend;
 
 	/*
 	 * Register the new request and wait if the reconstruction
@@ -1058,6 +1059,28 @@ static void make_request(struct mddev *mddev, struct bio * bio)
 	r1_bio->state = 0;
 	r1_bio->mddev = mddev;
 	r1_bio->sector = bio->bi_sector;
+
+	/*
+	 * when bio is write and it is in one of the suspend_range list,
+	 * put this bio into the retry list
+	 * */
+	if (test_bit(MD_NODE_SYNCING, &mddev->flags)) {
+		list_for_each_entry(suspend, 
+				&mddev->suspend_range, list)
+			if (rw == WRITE && bio->bi_sector < suspend->high &&
+					bio_end_sector(bio) > suspend->low) {
+				list_add(&r1_bio->retry_list, &conf->retry_list);
+				conf->nr_queued++;
+				return;
+			} else if (rw == READ && bio->bi_sector < suspend->high 
+					&& bio_end_sector(bio) > suspend->low) {
+				//TODO
+				/*
+				 * select the wright device to read
+				 **/
+				return;
+			}
+	}
 
 	/* We might need to issue multiple reads to different
 	 * devices if there are bad blocks around, so we keep
@@ -2298,10 +2321,51 @@ int handle_metadata_update(struct mddev *mddev, struct msg_entry *entry)
 
 int handle_resync_finished(struct mddev *mddev, struct msg_entry *entry)
 {
+	struct cluster_msg *msg = (struct cluster_msg *)entry->buf;
+	int bmpno = le32_to_cpu(msg->bitmap);
+	struct suspend *tmp, *suspend;
+	int ret = 0;
+
+	list_for_each_entry(suspend, &mddev->suspend_range, list)
+		if (suspend->bitmap == bmpno) {
+			tmp = suspend;
+			break;
+		}
+	if (!tmp) {
+		printk(KERN_ERR "md/raid1: received wrong bitmap number:%d\n", bmpno);
+		ret = -1;
+		goto out;
+	}
+	list_del(&tmp->list);
+	kfree(tmp);
+	if (list_empty(&mddev->suspend_range))
+		clear_bit(MD_NODE_SYNCING, &mddev->flags);
+	md_wakeup_thread(mddev->thread);
+out:
+	return ret;
 }
 
 int handle_suspend_range(struct mddev *mddev, struct msg_entry *entry)
 {
+	struct cluster_msg *msg = (struct cluster_msg *)entry->buf;
+	int bmpno = le32_to_cpu(msg->bitmap);
+	unsigned long long suspend_hi = le64_to_cpu(msg->high);
+	unsigned long long suspend_lo = le64_to_cpu(msg->low);
+
+	struct suspend_range_list *suspend = kzalloc(
+			sizeof(struct suspend_range_list), GFP_KERNEL);
+	if (!suspend) {
+		printk(KERN_ERR "md/raid1: cannot allocate memory.\n");
+		return -ENOMEM;
+	}
+
+	suspend->bitmap = bmpno;
+	suspend->high = suspend_hi;
+	suspend->low = suspend_lo;
+	list_add(&suspend->list, &mddev->suspend_range);
+	/*set MD_NODE_SYNCING flag*/
+	set_bit(MD_NODE_SYNCING, &mddev->flags);
+	return 0;
 }
 
 static struct msg_handle_struct handler[] = {
@@ -2321,6 +2385,7 @@ static void raid1d(struct md_thread *thread)
 	struct dlm_lock_resource *res;
 	int i, ret;
 	struct bitmap *bmp;
+	struct suspend_range_list *suspend, *tmp;
 
 	bmp = mddev->bitmap;
 	md_check_recovery(mddev);
@@ -2381,6 +2446,9 @@ static void raid1d(struct md_thread *thread)
 		if (mddev->msg_recvd->type >= CLUSTER_MD_MSG_MIN
 		    && mddev->msg_recvd->type <= CLUSTER_MD_MSG_MAX) {
 			ret = handler[mdedv->msg_recvd->type].handle(mddev, mddev->msg_recvd);
+			if (ret) {
+				printk(KERN_WARNING "md/raid1:message process warn!\n");
+			}
 		} else {
 			printk(KERN_WARNING "invalid message received!\n");
 		}
@@ -2399,6 +2467,19 @@ static void raid1d(struct md_thread *thread)
 			break;
 		}
 		r1_bio = list_entry(head->prev, struct r1bio, retry_list);
+		/*
+		 * whether this bio is still in the suspend_range list
+		 * */
+		list_for_each_entry(suspend, &mddev->suspend_range, list)
+			if (r1_bio->sector < suspend->high &&
+					r1_bio->sector + r1_bio->sectors > suspend->low) {
+				tmp = suspend;
+				break;
+			}
+		if (tmp) {
+			tmp = NULL;
+			continue;
+		}
 		list_del(head->prev);
 		conf->nr_queued--;
 		spin_unlock_irqrestore(&conf->device_lock, flags);

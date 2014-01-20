@@ -250,6 +250,13 @@ struct cluster_msg {
 	unsigned long long high;
 };
 
+struct suspend_range_list {
+	struct list_head list;
+	int bitmap;
+	unsigned long long low;
+	unsigned long long high;
+};
+
 typedef int (*msg_handle)(struct mddev *mddev, struct msg_entry *entry);
 
 struct msg_handle_struct {
@@ -272,6 +279,7 @@ struct mddev {
 #define MD_STILL_CLOSED	4	/* If set, then array has not been opened since
 				 * md_ioctl checked on it.
 				 */
+#define MD_NODE_SYNCING 8  /*other nodes in the cluster is doing resync*/
 
 	int				suspended;
 	atomic_t			active_io;
@@ -506,6 +514,8 @@ struct mddev {
 	int *reclaim_bitmap;
 	struct mutex *sb_mutex;
 
+	/*suspend range list*/
+	struct list_head  suspend_range;
 
 	atomic_t 			max_corr_read_errors; /* max read retries */
 	struct list_head		all_mddevs;

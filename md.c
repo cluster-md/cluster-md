@@ -530,6 +530,7 @@ void mddev_init(struct mddev *mddev)
 	INIT_LIST_HEAD(&mddev->all_mddevs);
 	INIT_LIST_HEAD(&mddev->dlm_md_bitmap);
 	INIT_LIST_HEAD(&mddev->send_list);
+	INIT_LIST_HEAD(&mddev->suspend_range);
 	spin_lock_init(&mddev->send_lock);
 	init_timer(&mddev->safemode_timer);
 	atomic_set(&mddev->active, 1);
@@ -5324,7 +5325,7 @@ int md_send_resync_finished(struct mddev *mddev, int bmpno)
 	return 0;
 }
 
-int md_send_suspend(struct mddev *mddev, int bmpno, long long sus_start, long long sus_end)
+int md_send_suspend(struct mddev *mddev, int bmpno, unsigned long long sus_start, unsigned long long sus_end)
 {
 	struct dlm_md_msg *msg;
 	struct cluster_msg *suspend;
