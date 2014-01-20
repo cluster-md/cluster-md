@@ -215,6 +215,7 @@ struct dlm_lock_resource {
 	struct dlm_lksb lksb;
 	uint32_t parent_lkid;
 	struct mddev *mddev; /* pointing back to mddev. */
+	void *bast(void *arg); /*bast for sync lock*/
 };
 
 struct dlm_md_msg {
@@ -242,19 +243,18 @@ struct msg_entry {
 	char buf[0];
 };
 
-struct msg_metadat_update {
-	int type;
-};
-
-struct msg_resync_finish {
+struct cluster_msg {
 	int type;
 	int bitmap;
+	unsigned long long low;
+	unsigned long long high;
 };
 
-struct msg_suspend {
-	int type;
-	long long low;
-	long long high;
+struct suspend_range_list {
+	struct list_head list;
+	int bitmap;
+	unsigned long long low;
+	unsigned long long high;
 };
 
 typedef int (*msg_handle)(struct mddev *mddev, struct msg_entry *entry);
@@ -279,6 +279,7 @@ struct mddev {
 #define MD_STILL_CLOSED	4	/* If set, then array has not been opened since
 				 * md_ioctl checked on it.
 				 */
+#define MD_NODE_SYNCING 8  /*other nodes in the cluster is doing resync*/
 
 	int				suspended;
 	atomic_t			active_io;
@@ -502,7 +503,7 @@ struct mddev {
 
 	/* 3 resources for message passing. */
 	struct dlm_lock_resource *dlm_md_message;
-	struct dlm_lock_resource *dlm_md_idle;
+	struct dlm_lock_resource *dlm_md_token;
 	struct dlm_lock_resource *dlm_md_ack;
 
 	/* linked list for bitmap resources. */
@@ -513,6 +514,8 @@ struct mddev {
 	int *reclaim_bitmap;
 	struct mutex *sb_mutex;
 
+	/*suspend range list*/
+	struct list_head  suspend_range;
 
 	atomic_t 			max_corr_read_errors; /* max read retries */
 	struct list_head		all_mddevs;
@@ -721,4 +724,7 @@ static inline int mddev_check_plugged(struct mddev *mddev)
 	return !!blk_check_plugged(md_unplug, mddev,
 				   sizeof(struct blk_plug_cb));
 }
+
+extern int dlm_lock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
+extern int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
 #endif /* _MD_MD_H */

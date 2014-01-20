@@ -1013,6 +1013,7 @@ static void make_request(struct mddev *mddev, struct bio * bio)
 	int first_clone;
 	int sectors_handled;
 	int max_sectors;
+	struct suspend_range_list *suspend;
 
 	/*
 	 * Register the new request and wait if the reconstruction
@@ -1058,6 +1059,28 @@ static void make_request(struct mddev *mddev, struct bio * bio)
 	r1_bio->state = 0;
 	r1_bio->mddev = mddev;
 	r1_bio->sector = bio->bi_sector;
+
+	/*
+	 * when bio is write and it is in one of the suspend_range list,
+	 * put this bio into the retry list
+	 * */
+	if (test_bit(MD_NODE_SYNCING, &mddev->flags)) {
+		list_for_each_entry(suspend, 
+				&mddev->suspend_range, list)
+			if (rw == WRITE && bio->bi_sector < suspend->high &&
+					bio_end_sector(bio) > suspend->low) {
+				list_add(&r1_bio->retry_list, &conf->retry_list);
+				conf->nr_queued++;
+				return;
+			} else if (rw == READ && bio->bi_sector < suspend->high 
+					&& bio_end_sector(bio) > suspend->low) {
+				//TODO
+				/*
+				 * select the wright device to read
+				 **/
+				return;
+			}
+	}
 
 	/* We might need to issue multiple reads to different
 	 * devices if there are bad blocks around, so we keep
@@ -2298,10 +2321,51 @@ int handle_metadata_update(struct mddev *mddev, struct msg_entry *entry)
 
 int handle_resync_finished(struct mddev *mddev, struct msg_entry *entry)
 {
+	struct cluster_msg *msg = (struct cluster_msg *)entry->buf;
+	int bmpno = le32_to_cpu(msg->bitmap);
+	struct suspend *tmp, *suspend;
+	int ret = 0;
+
+	list_for_each_entry(suspend, &mddev->suspend_range, list)
+		if (suspend->bitmap == bmpno) {
+			tmp = suspend;
+			break;
+		}
+	if (!tmp) {
+		printk(KERN_ERR "md/raid1: received wrong bitmap number:%d\n", bmpno);
+		ret = -1;
+		goto out;
+	}
+	list_del(&tmp->list);
+	kfree(tmp);
+	if (list_empty(&mddev->suspend_range))
+		clear_bit(MD_NODE_SYNCING, &mddev->flags);
+	md_wakeup_thread(mddev->thread);
+out:
+	return ret;
 }
 
 int handle_suspend_range(struct mddev *mddev, struct msg_entry *entry)
 {
+	struct cluster_msg *msg = (struct cluster_msg *)entry->buf;
+	int bmpno = le32_to_cpu(msg->bitmap);
+	unsigned long long suspend_hi = le64_to_cpu(msg->high);
+	unsigned long long suspend_lo = le64_to_cpu(msg->low);
+
+	struct suspend_range_list *suspend = kzalloc(
+			sizeof(struct suspend_range_list), GFP_KERNEL);
+	if (!suspend) {
+		printk(KERN_ERR "md/raid1: cannot allocate memory.\n");
+		return -ENOMEM;
+	}
+
+	suspend->bitmap = bmpno;
+	suspend->high = suspend_hi;
+	suspend->low = suspend_lo;
+	list_add(&suspend->list, &mddev->suspend_range);
+	/*set MD_NODE_SYNCING flag*/
+	set_bit(MD_NODE_SYNCING, &mddev->flags);
+	return 0;
 }
 
 static struct msg_handle_struct handler[] = {
@@ -2321,6 +2385,7 @@ static void raid1d(struct md_thread *thread)
 	struct dlm_lock_resource *res;
 	int i, ret;
 	struct bitmap *bmp;
+	struct suspend_range_list *suspend, *tmp;
 
 	bmp = mddev->bitmap;
 	md_check_recovery(mddev);
@@ -2332,7 +2397,7 @@ static void raid1d(struct md_thread *thread)
 	mutex_lock(&mddev->avail_mutex);
 	if (bmp->used == -1) {
 		for (i = 0; i < mddev->bitmap_info.nodes; i++) {
-			if (mddev->avail_bitmap[1] == -1) {
+			if (mddev->avail_bitmap[i] == -1) {
 				continue;
 			}
 			res = find_bitmap_by_node(mddev, mddev->avail_bitmap[i]);
@@ -2381,6 +2446,9 @@ static void raid1d(struct md_thread *thread)
 		if (mddev->msg_recvd->type >= CLUSTER_MD_MSG_MIN
 		    && mddev->msg_recvd->type <= CLUSTER_MD_MSG_MAX) {
 			ret = handler[mdedv->msg_recvd->type].handle(mddev, mddev->msg_recvd);
+			if (ret) {
+				printk(KERN_WARNING "md/raid1:message process warn!\n");
+			}
 		} else {
 			printk(KERN_WARNING "invalid message received!\n");
 		}
@@ -2399,6 +2467,19 @@ static void raid1d(struct md_thread *thread)
 			break;
 		}
 		r1_bio = list_entry(head->prev, struct r1bio, retry_list);
+		/*
+		 * whether this bio is still in the suspend_range list
+		 * */
+		list_for_each_entry(suspend, &mddev->suspend_range, list)
+			if (r1_bio->sector < suspend->high &&
+					r1_bio->sector + r1_bio->sectors > suspend->low) {
+				tmp = suspend;
+				break;
+			}
+		if (tmp) {
+			tmp = NULL;
+			continue;
+		}
 		list_del(head->prev);
 		conf->nr_queued--;
 		spin_unlock_irqrestore(&conf->device_lock, flags);
@@ -2986,6 +3067,145 @@ static void deinit_lock_resource(struct dlm_lock_resource *res)
 	return;
 }
 
+/*
+ * thread for receiving message
+ * */
+static void raid1_recvd(struct md_thread *thread)
+{
+	struct mddev *mddev = thread->mddev;
+	struct dlm_lock_resource *ack = mddev->dlm_md_ack;
+	struct dlm_lock_resource *message = mddev->dlm_md_message;
+	struct cluster_msg *msg;
+	struct msg_entry *entry;
+
+	/*get CR on Message*/
+	message->state = 0;
+	message->mode = DLM_LOCK_CR;
+	message->flags = DLM_LKF_VALBLK;
+	message->parent_id = 0;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
+		printk(KERN_ERR "md/raid1:failed to get CR on MESSAGE\n");
+		return;
+	}
+
+	//read lvb and wake up thread to process this message
+	entry = kzalloc(sizeof(struct msg_entry) + sizeof(struct cluster_msg), GFP_KERNEL); 
+	if (!entry) {
+		printk(KERN_ERR "md/raid1:failed to alloc mem\n");
+		return -ENOMEM;
+	}
+	memcpy(entry->buf, message->lksb.sb_lvbptr, sizeof(struct cluster_msg));
+	msg = (struct cluster_msg *) entry->buf;
+	entry->type = msg->type;
+	mddev->msg_recvd = entry;
+	md_wakeup_thread(mddev->thread);
+	wait_event_interruptible(&mddev->recv_wait, mddev->msg_recvd == NULL);
+
+	/*release CR on ack*/
+	dlm_unlock_sync(mddev->dlm_md_lockspace, ack);
+	/*release CR on message*/
+	dlm_unlock_sync(mddev->dlm_md_lockspace, message);
+	/*get CR on ack again*/
+	ack->state = 0;
+	ack->mode = DLM_LOCK_CR;
+	ack->flags = 0;
+	ack->bast = wait_for_receive_message;
+	ack->parent_id = 0;
+	dlm_lock_sync(mddev->dlm_md_lockspace, ack);
+}
+
+/*
+ * wake up recv thread here
+ * */
+static void wait_for_receive_message(void *arg)
+{
+	struct dlm_lock_resource *res = (struct dlm_lock_resource *)arg;
+	struct mddev *mddev = res->mddev;
+	md_wakeup_thread(mddev->recv_thread);
+}
+
+/*
+ * thread for sending message
+ * QUSTION: whether process message in the send_list in a loop?
+ * */
+static void raid1_sendd(struct md_thread *thread)
+{
+	struct mddev *mddev = thread->mddev;
+	struct dlm_lock_resource *ack = mddev->dlm_md_ack;
+	struct dlm_lock_resource *message = mddev->dlm_md_message;
+	struct dlm_lock_resource *token = mddev->dlm_md_token;
+	struct dlm_md_msg *msg;
+
+	if (list_empty(mddev->send_list)) {
+		printk(KERN_ERR "md/raid1:mddev->send_list is empty \n");
+		return;
+	}
+
+	/*Get EX on Token*/
+	token->state = 0;
+	token->mode = DLM_LOCK_EX;
+	token->flags = 0;
+	token->parent_id = 0;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, token)) {
+		printk(KERN_ERR "md/raid1:failed to get EX on TOKEN\n");
+		return;
+	}
+
+	msg = list_entry(mddev->send_list.next,
+			struct dlm_md_msg,
+			list);
+
+
+	/*get EX on Message*/
+	message->state = 0;
+	message->mode = DLM_LOCK_EX;
+	message->flags = 0;
+	message->parent_id = 0;
+	message->bast = NULL;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
+		printk(KERN_ERR "md/raid1:failed to get EX on MESSAGE\n");
+		goto failed_message;
+	}
+
+	/*down-convert EX to CR on Message*/
+	message->mode = DLM_LOCK_CR;
+	message->flags = DLM_LKF_CONVERT|DLM_LKF_VALBLK;
+	memcpy(&message->lksb.sb_lvbptr, msg->buf, sizeof(struct cluster_msg));
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
+		printk(KERN_ERR "md/raid1:failed to convert EX to CR on MESSAGE\n");
+		goto failed_message;
+	}
+
+	/*up-convert CR to EX on Ack*/
+	ack->state = 0;
+	ack->mode = DLM_LOCK_EX;
+	ack->flags = DLM_LKF_CONVERT;
+	ack->parent_id = 0;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, ack)) {
+		printk(KERN_ERR "md/raid1:failed to convert CR to EX on ACK\n");
+		goto failed_ack;
+	}
+
+	/*down-convert EX to CR on Ack*/
+	ack->mode = DLM_LOCK_CR;
+	ack->flags = DLM_LKF_CONVERT;
+	ack->bast = wait_for_receive_message;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, ack)) {
+		printk(KERN_ERR "md/raid1:failed to convert EX to CR on ACK\n");
+		goto failed_ack;
+	}
+
+	msg->sent = 1;
+	wake_up(msg->waiter);
+	list_del(msg->list);
+	dlm_unlock_sync(mddev->dlm_md_lockspace, ack);
+failed_ack:
+	dlm_unlock_sync(mddev->dlm_md_lockspace, message);
+failed_message:
+	dlm_unlock_sync(mddev->dlm_md_lockspace, token);
+}
+
+
 static int stop(struct mddev *mddev);
 static int run(struct mddev *mddev)
 {
@@ -2994,6 +3214,7 @@ static int run(struct mddev *mddev)
 	struct md_rdev *rdev;
 	int ret;
 	bool discard_supported = false;
+	dlm_lock_resource *res = NULL;
 
 	if (mddev->level != 1) {
 		printk(KERN_ERR "md/raid1:%s: raid level not set to mirroring (%d)\n",
@@ -3095,18 +3316,28 @@ static int run(struct mddev *mddev)
 	mmddev->dlm_md_message->lksb.sb_lvbptr = kzalloc(32, GFP_KERNEL);
 	if (!mddev->dlm_md_message->lksb.sb_lvbptr)
 		goto message_failed;
-	mddev->dlm_md_idle = init_lock_resource(mddev, "idle");
-	if (!mddev->dlm_md_idle)
-		goto idle_failed;
+	mddev->dlm_md_token = init_lock_resource(mddev, "token");
+	if (!mddev->dlm_md_token)
+		goto token_failed;
 	mddev->dlm_md_ack = init_lock_resource(mddev, "ack");
 	if (!mddev->dlm_md_ack)
 		goto ack_failed;
-	/* wake up recev thread. */
+	/* get sync CR lock on ACK. */
+	res = mddev->dlm_md_ack;
+	res->finished = 0;
+	res->mode = DLM_LOCK_CR;
+	res->flags = DLM_LKF_NOQUEUE;
+	res->parent_id = 0;
+	res->state = 0;
+	res->bast = wait_for_receive_message;
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, res)) {
+		printk(KERN_ERR "failed to get a sync CR lock on ACK!\n");
+	}
 	return ret;
 ack_failed:
-	deinit_lock_resource(mddev->dlm_md_idle);
-	mddev->dlm_md_idle = NULL;
-idle_failed:
+	deinit_lock_resource(mddev->dlm_md_token);
+	mddev->dlm_md_token = NULL;
+token_failed:
 	deinit_lock_resource(mddev->dlm_md_message);
 	mddev->dlm_md_message = NULL;
 message_failed:
@@ -3134,16 +3365,17 @@ static int stop(struct mddev *mddev)
 	raise_barrier(conf);
 	lower_barrier(conf);
 
+	dlm_unlock_sync(mddev->dlm_md_lockspace, mddev->dlm_md_message);
 	md_unregister_thread(&mddev->thread);
 	md_unregister_thread(&mddev->recv_thread);
 	md_unregister_thread(&mddev->send_thread);
 	deinit_lock_resource(mddev->dlm_md_resync);
 	deinit_lock_resource(mddev->dlm_md_message);
-	deinit_lock_resource(mddev->dlm_md_idle);
+	deinit_lock_resource(mddev->dlm_md_token);
 	deinit_lock_resource(mddev->dlm_md_ack);
 	mddev->dlm_md_resync = NULL;
 	mddev->dlm_md_message = NULL;
-	mddev->dlm_md_idle = NULL;
+	mddev->dlm_md_token = NULL;
 	mddev->dlm_md_ack = NULL;
 	while (!list_empty(&mddev->dlm_md_bitmap)) {
 		struct dlm_lock_resource *pos;
