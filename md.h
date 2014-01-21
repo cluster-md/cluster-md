@@ -728,4 +728,15 @@ static inline int mddev_check_plugged(struct mddev *mddev)
 
 extern int dlm_lock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
 extern int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
+
+extern int md_lock_super(struct mddev *mddev, int mode);
+extern void md_unlock_super(struct mddev *mddev);
+extern int md_send_metadata_update(struct mddev *mddev, int async);
+/* FIXME? are these internal functions */
+extern dlm_lockspace_t *md_get_lockspace(void);
+extern struct mutex *md_get_sb_mutex(void);
+struct dlm_lock_resource *md_get_mddev_sb_lock(void);
+void deinit_lock_resource(struct dlm_lock_resource *res);
+struct dlm_lock_resource *init_lock_resource(struct mddev *mddev, char *name);
+
 #endif /* _MD_MD_H */
