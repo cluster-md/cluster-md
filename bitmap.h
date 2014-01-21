@@ -264,9 +264,9 @@ void bitmap_write_all(struct bitmap *bitmap);
 void bitmap_dirty_bits(struct bitmap *bitmap, unsigned long s, unsigned long e);
 
 /* these are exported */
-int bitmap_startwrite(struct bitmap *bitmap, sector_t offset,
+int bitmap_startwrite(struct bitmap *bitmap,int node, sector_t offset,
 			unsigned long sectors, int behind);
-void bitmap_endwrite(struct bitmap *bitmap, sector_t offset,
+void bitmap_endwrite(struct bitmap *bitmap, int node, sector_t offset,
 			unsigned long sectors, int success, int behind);
 int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, int degraded);
 void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, int aborted);
