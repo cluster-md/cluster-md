@@ -268,16 +268,23 @@ int bitmap_startwrite(struct bitmap *bitmap,int node, sector_t offset,
 			unsigned long sectors, int behind);
 void bitmap_endwrite(struct bitmap *bitmap, int node, sector_t offset,
 			unsigned long sectors, int success, int behind);
-int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, int degraded);
-void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, int aborted);
-void bitmap_close_sync(struct bitmap *bitmap);
-void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector);
+int bitmap_start_sync(struct bitmap *bitmap, int node, sector_t offset, sector_t *blocks, int degraded);
+void bitmap_end_sync(struct bitmap *bitmap, int node, sector_t offset, sector_t *blocks, int aborted);
+void bitmap_close_sync(struct bitmap *bitmap, int node);
+void bitmap_cond_end_sync(struct bitmap *bitmap, int node, sector_t sector);
 
 void bitmap_unplug(struct bitmap *bitmap);
 void bitmap_daemon_work(struct mddev *mddev);
 
 int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 		  int chunksize, int init);
+
+/* COMPILE */
+struct dlm_lock_resource *find_bitmap_by_node(struct mddev *mddev, int node);
+int bitmap_lock_sync(struct dlm_lock_resource *res);
+int bitmap_unlock_sync(struct dlm_lock_resource *res);
+int bitmap_lock_async(struct dlm_lock_resource *res);
+
 #endif
 
 #endif

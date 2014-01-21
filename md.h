@@ -224,6 +224,7 @@ struct dlm_md_msg {
 	int async;
 	char *buf;
 	int len;
+	int sent;
 };
 
 /* message types used in CRAID1 */
@@ -231,7 +232,7 @@ struct dlm_md_msg {
 
 
 #define METADATA_UPDATED	(0)
-#define RESYNC_FININSHED	(1)
+#define RESYNC_FINISHED	(1)
 #define SUSPEND_RANGE		(2)
 #define MAX_MSG_LEN		(sizeof(struct msg_suspend))
 #define PER_NODE_COUNTER	(32)
