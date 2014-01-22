@@ -2410,6 +2410,25 @@ static void raid1d(struct md_thread *thread)
 				break;
 			}
 		}
+	} else {
+		/*get CR lock on some node that fails*/
+		for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+			if (mddev->avail_bitmap[i] == -1) {
+				continue;
+			}
+			res = find_bitmap_by_node(mddev, mddev->avail_bitmap[i]);
+			res->mode = DLM_LOCK_PW;
+			res->finished = 0;
+			res->flags = DLM_LKF_CONVERT | DLM_LKF_NOQUEUE;
+			ret = bitmap_lock_sync(res);
+			if (!ret) {
+				wake_up(&mddev->bitmap_wait);
+				break;
+			}
+		}
+		/*read disk bitmap and check if there should do a resync.
+		  if should, then first send a suspend message.After the sync, 
+		  send a sync finish message*/
 	}
 	mutex_unlock(&mddev->avail_mutex);
 
