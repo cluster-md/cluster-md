@@ -1068,17 +1068,10 @@ static void make_request(struct mddev *mddev, struct bio * bio)
 	if (test_bit(MD_NODE_SYNCING, &mddev->flags)) {
 		list_for_each_entry(suspend, 
 				&mddev->suspend_range, list)
-			if (rw == WRITE && bio->bi_sector < suspend->high &&
+			if (bio->bi_sector < suspend->high &&
 					bio_end_sector(bio) > suspend->low) {
 				list_add(&r1_bio->retry_list, &conf->retry_list);
 				conf->nr_queued++;
-				return;
-			} else if (rw == READ && bio->bi_sector < suspend->high 
-					&& bio_end_sector(bio) > suspend->low) {
-				//TODO
-				/*
-				 * select the wright device to read
-				 **/
 				return;
 			}
 	}
