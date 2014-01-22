@@ -215,7 +215,7 @@ struct dlm_lock_resource {
 	struct dlm_lksb lksb;
 	uint32_t parent_lkid;
 	struct mddev *mddev; /* pointing back to mddev. */
-	void *bast(void *arg); /*bast for sync lock*/
+	void (*bast)(void *arg); /*bast for sync lock*/
 };
 
 struct dlm_md_msg {
@@ -224,6 +224,7 @@ struct dlm_md_msg {
 	int async;
 	char *buf;
 	int len;
+	int sent;
 };
 
 /* message types used in CRAID1 */
@@ -231,7 +232,7 @@ struct dlm_md_msg {
 
 
 #define METADATA_UPDATED	(0)
-#define RESYNC_FININSHED	(1)
+#define RESYNC_FINISHED	(1)
 #define SUSPEND_RANGE		(2)
 #define MAX_MSG_LEN		(sizeof(struct msg_suspend))
 #define PER_NODE_COUNTER	(32)
@@ -727,4 +728,15 @@ static inline int mddev_check_plugged(struct mddev *mddev)
 
 extern int dlm_lock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
 extern int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
+
+extern int md_lock_super(struct mddev *mddev, int mode);
+extern void md_unlock_super(struct mddev *mddev);
+extern int md_send_metadata_update(struct mddev *mddev, int async);
+/* FIXME? are these internal functions */
+extern dlm_lockspace_t *md_get_lockspace(void);
+extern struct mutex *md_get_sb_mutex(void);
+struct dlm_lock_resource *md_get_mddev_sb_lock(void);
+void deinit_lock_resource(struct dlm_lock_resource *res);
+struct dlm_lock_resource *init_lock_resource(struct mddev *mddev, char *name);
+
 #endif /* _MD_MD_H */

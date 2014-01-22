@@ -410,8 +410,8 @@ void bitmap_update_sb(struct bitmap *bitmap)
 	int ret = -EAGAIN;
 	struct mddev *mddev;
 	event_counter_t *counter;
-	events_info *info;
-	struct *page;
+	struct events_info *info;
+	struct page *page;
 	unsigned long per_section;
 	int i;
 
@@ -452,12 +452,12 @@ void bitmap_update_sb(struct bitmap *bitmap)
 		per_section = bitmap->storage.per_node_pages * bitmap->used + 1;
 		page = bitmap->storage.filemap[per_section];
 		counter = kmap_atomic(page);
-		counter.events = cpu_to_le64(mddev->events);
+		counter->events = cpu_to_le64(mddev->events);
 		if (mddev->events < info->events_cleared) {
 			info->events_cleared = mddev->events;
 		}
-		counter.events_cleared = cpu_to_le64(info->events_cleared);
-		counter.state = cpu_to_le32(info->flags);
+		counter->events_cleared = cpu_to_le64(info->events_cleared);
+		counter->state = cpu_to_le32(info->flags);
 		kunmap_atomic(counter);
 		write_page(bitmap, page, 1);
 	}
@@ -471,12 +471,12 @@ void bitmap_update_sb(struct bitmap *bitmap)
 					+ 1;
 			page = bitmap->storage.filemap[per_section];
 			counter = kmap_atomic(page);
-			counter.events = cpu_to_le64(mddev->events);
+			counter->events = cpu_to_le64(mddev->events);
 			if (mddev->events < info->events_cleared) {
 				info->events_cleared = mddev->events;
 			}
-			counter.events_cleared = cpu_to_le64(info->events_cleared);
-			counter.state = cpu_to_le32(info->flags);
+			counter->events_cleared = cpu_to_le64(info->events_cleared);
+			counter->state = cpu_to_le32(info->flags);
 			kunmap_atomic(counter);
 			write_page(bitmap, page, 1);
 		}
@@ -1011,7 +1011,7 @@ void bitmap_unplug(struct bitmap *bitmap)
 }
 EXPORT_SYMBOL(bitmap_unplug);
 
-static void bitmap_set_memory_bits(struct bitmap *bitmap, sector_t offset, int needed);
+static void bitmap_set_memory_bits(struct bitmap *bitmap,int node, sector_t offset, int needed);
 /* * bitmap_init_from_disk -- called at bitmap_create time to initialize
  * the in-memory bitmap from the on-disk bitmap -- also, sets up the
  * memory mapping of the bitmap file
@@ -1036,7 +1036,7 @@ static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
 	struct bitmap_storage *store = &bitmap->storage;
 	struct mddev *mddev = bitmap->mddev;
 	struct events_info *info;
-	struct event_counter_t *counter;
+	struct event_counter_s *counter;
 	__u64 events;
 
 	chunks = bitmap->counts.chunks;
@@ -1050,9 +1050,12 @@ static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
 			/* if the disk bit is set, set the memory bit */
 			int needed = ((sector_t)(i+1) << (bitmap->counts.chunkshift)
 				      >= start);
+
+			/* COMPILE
 			bitmap_set_memory_bits(bitmap,
 					       (sector_t)i << bitmap->counts.chunkshift,
 					       needed);
+					       */
 		}
 		return 0;
 	}
@@ -1130,7 +1133,7 @@ static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
 						"recovery\n", bmname(bitmap), j);
 						info->events_cleared = mddev->events;
 					}
-					kumap_atomic(counter);
+					kunmap_atomic(counter);
 				}
 
 				if (outofdate) {
@@ -1295,7 +1298,7 @@ void bitmap_daemon_work(struct mddev *mddev, int node)
 		if (bitmap->storage.filemap) {
 			counter = kmap_atomic(bitmap->storage.filemap[start]);
 			counter->events_cleared = cpu_to_le64(info->events_cleared);
-			kumap_atomic(counter);
+			kunmap_atomic(counter);
 			set_page_attr(bitmap, start, BITMAP_PAGE_NEEDWRITE);
 		}
 		/*
@@ -1367,7 +1370,7 @@ void bitmap_daemon_work(struct mddev *mddev, int node)
 		if (test_and_clear_page_attr(bitmap, j,
 					     BITMAP_PAGE_NEEDWRITE)) {
 			if (!j) {
-				md_lock_super(mddev);
+				md_lock_super(mddev, DLM_LOCK_EX);
 			}
 			write_page(bitmap, bitmap->storage.filemap[j], 0);
 			if (!j) {
@@ -1739,11 +1742,11 @@ void bitmap_flush(struct mddev *mddev)
 	 */
 	sleep = mddev->bitmap_info.daemon_sleep * 2;
 	bitmap->daemon_lastrun -= sleep;
-	bitmap_daemon_work(mddev);
+	bitmap_daemon_work(mddev, mddev->bitmap->used);
 	bitmap->daemon_lastrun -= sleep;
-	bitmap_daemon_work(mddev);
+	bitmap_daemon_work(mddev, mddev->bitmap->used);
 	bitmap->daemon_lastrun -= sleep;
-	bitmap_daemon_work(mddev);
+	bitmap_daemon_work(mddev, mddev->bitmap->used);
 	bitmap_update_sb(bitmap);
 }
 
@@ -1788,14 +1791,14 @@ void bitmap_destroy(struct mddev *mddev)
 	mutex_lock(&mddev->bitmap_info.mutex);
 	mddev->bitmap = NULL; /* disconnect from the md device */
 	mutex_unlock(&mddev->bitmap_info.mutex);
-	if (mmdev->avail_bitmap) {
+	if (mddev->avail_bitmap) {
 		kfree(mddev->avail_bitmap);
 		mddev->avail_bitmap = NULL;
 	}
 
 	if (mddev->reclaim_bitmap) {
 		kfree(mddev->reclaim_bitmap);
-		mddev->recalim_bitmap = NULL;
+		mddev->reclaim_bitmap = NULL;
 	}
 
 	if (bitmap->events) {
@@ -2040,14 +2043,14 @@ void bitmap_ast(void *arg)
 	res->finished = 1;
 	/* unlock successfully */
 	if (res->lksb.sb_status == -DLM_EUNLOCK) {
-		wake_up(&res->waiter)
+		wake_up(&res->waiter);
 		return;
 	}
 	/* lock successfully. */
 	if (!res->lksb.sb_status) {
 		if (res->mode == DLM_LOCK_CR) {
 			mutex_lock(&mddev->avail_mutex);
-			bitmap_add_avail_bitmap(mddev, res->inex);
+			bitmap_add_avail_bitmap(mddev, res->index);
 			mutex_unlock(&mddev->avail_mutex);
 			md_wakeup_thread(mddev->thread);
 		}
@@ -2107,14 +2110,14 @@ int bitmap_lock_sync(struct dlm_lock_resource *res)
 	
 	mddev = res->mddev;
 	res->finished = 0;
-	ret = dlm_lock(mddev->md_lockspace, res->mode, &res->lksb,
+	ret = dlm_lock(mddev->dlm_md_lockspace, res->mode, &res->lksb,
 			res->flags, res->name, res->namelen, 
 			res->parent_lkid, bitmap_ast, res,
 			bitmap_bast);
 	if (ret) {
 		return ret;
 	}
-	wait_event(&res->waiter, res->finished == 1);
+	wait_event(res->waiter, res->finished == 1);
 	return res->lksb.sb_status;
 }
 
@@ -2125,21 +2128,21 @@ int bitmap_unlock_sync(struct dlm_lock_resource *res)
 
 	mddev = res->mddev;
 	res->finished = 0;
-	ret = dlm_unlock(mddev->md_lockspace, res->lksb.sb_lkid, res->flags, 
+	ret = dlm_unlock(mddev->dlm_md_lockspace, res->lksb.sb_lkid, res->flags, 
 			&res->lksb, res);
 	if (ret) {
 		return ret;
 	}
-	wait_event(&res->waiter, res->finished == 1);
+	wait_event(res->waiter, res->finished == 1);
 	return res->lksb.sb_status;
 }
 
 int bitmap_lock_async(struct dlm_lock_resource *res)
 {
-	struct mddev *mddev,
+	struct mddev *mddev;
 	int ret;
 	mddev = res->mddev;
-	ret = dlm_lock(mddev->md_lockspace, res->mode, &res->lksb, res->flags,
+	ret = dlm_lock(mddev->dlm_md_lockspace, res->mode, &res->lksb, res->flags,
 			res->name, res->namelen, res->parent_lkid,
 			bitmap_ast, res, bitmap_bast);
 	return ret;
@@ -2171,7 +2174,7 @@ int bitmap_load(struct mddev *mddev)
 		}
 		sector += blocks;
 	}
-	if (btimap->used != -1) {
+	if (bitmap->used != -1) {
 		bitmap_close_sync(bitmap, bitmap->used);
 	}
 

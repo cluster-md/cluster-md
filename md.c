@@ -87,7 +87,7 @@ static dlm_lockspace_t *md_lockspace;
  * release it after writing.
  */
 static struct mutex sb_mutex;
-static struct dlm_md_resource *sb_lock;
+static struct dlm_lock_resource *mddev_sb_lock;
 
 static int remove_and_add_spares(struct mddev *mddev,
 				 struct md_rdev *this);
@@ -882,28 +882,28 @@ static int read_disk_sb(struct md_rdev * rdev, int size)
 		return 0;
 
 	mutex_lock(&sb_mutex);
-	sb_lock->finished = 0;
-	sb_lock->mode = DLM_LOCK_CR;
-	sb_lock->flags = 0;
-	sb_lock->parent_lkid = 0;
-	sb_lock->state = 0;
-	memset(&sb_lock->lksb, 0, sizeof(struct dlm_lksb));
+	mddev_sb_lock->finished = 0;
+	mddev_sb_lock->mode = DLM_LOCK_CR;
+	mddev_sb_lock->flags = 0;
+	mddev_sb_lock->parent_lkid = 0;
+	mddev_sb_lock->state = 0;
+	memset(&mddev_sb_lock->lksb, 0, sizeof(struct dlm_lksb));
 	while (ret && ret == -EAGAIN) {
-		ret = dlm_lock_sync(md_lockspace, sb_lock);
+		ret = dlm_lock_sync(md_lockspace, mddev_sb_lock);
 	}
 	if (ret) {
-		printk(KERN_WARNING "dlm lock error: %s", strerror(ret));
+		printk(KERN_WARNING "dlm lock error");
 		mutex_unlock(&sb_mutex);
 		goto fail;
 	}
 	
-	ret = sync_page_io(rdev, 0, size, rdev->sb_page, READ, true)
+	ret = sync_page_io(rdev, 0, size, rdev->sb_page, READ, true);
 	if (!ret) {
-		dlm_unlock_sync(md_lockspace, sb_lock);
+		dlm_unlock_sync(md_lockspace, mddev_sb_lock);
 		mutex_unlock(&sb_mutex);
 		goto fail;
 	}
-	dlm_unlock_sync(md_lockspace, sb_lock);
+	dlm_unlock_sync(md_lockspace, mddev_sb_lock);
 	mutex_unlock(&sb_mutex);
 	rdev->sb_loaded = 1;
 	return 0;
@@ -1952,7 +1952,7 @@ super_1_rdev_size_change(struct md_rdev *rdev, sector_t num_sectors)
 	md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
 		       rdev->sb_page);
 	md_super_wait(rdev->mddev);
-	md_unlock_super(mddev);
+	md_unlock_super(rdev->mddev);
 	return num_sectors;
 
 }
@@ -2730,6 +2730,7 @@ state_store(struct md_rdev *rdev, const char *buf, size_t len)
 	 *  -write_error - clears WriteErrorSeen
 	 */
 	int err = -EINVAL;
+	int ret;
 	if (cmd_match(buf, "faulty") && rdev->mddev->pers) {
 		md_error(rdev->mddev, rdev);
 		if (test_bit(Faulty, &rdev->flags))
@@ -4158,7 +4159,9 @@ bitmap_store(struct mddev *mddev, const char *buf, size_t len)
 			if (buf == end) break;
 		}
 		if (*end && !isspace(*end)) break;
+		/* COMPILE 
 		bitmap_dirty_bits(mddev->bitmap, chunk, end_chunk);
+		*/
 		buf = skip_spaces(end);
 	}
 	bitmap_unplug(mddev->bitmap); /* flush the bits to disk */
@@ -5233,8 +5236,6 @@ int md_run(struct mddev *mddev)
 	set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
 	
 	if (mddev->flags & MD_UPDATE_SB_FLAGS) {
-		struct dlm_md_msg *msg;
-		struct msg_metadata_update *tmp;
 		md_update_sb(mddev, 0);
 		/* super block updated. 
 		 * Should prepare message to the send thread
@@ -5287,7 +5288,7 @@ int md_send_metadata_update(struct mddev *mddev, int async)
 	spin_unlock(&mddev->send_lock);
 	md_wakeup_thread(mddev->send_thread);
 	if (!async) {
-		wait_event(&msg->waiter, msg->sent != 0);
+		wait_event(msg->waiter, msg->sent != 0);
 		kfree(msg->buf);
 		kfree(msg);
 	}
@@ -5319,7 +5320,7 @@ int md_send_resync_finished(struct mddev *mddev, int bmpno)
 	list_add_tail(&msg->list, &mddev->send_list);
 	spin_unlock(&mddev->send_lock);
 	md_wakeup_thread(mddev->send_thread);
-	wait_event(&msg->waiter, msg->sent != 0);
+	wait_event(msg->waiter, msg->sent != 0);
 	kfree(msg->buf);
 	kfree(msg);
 	return 0;
@@ -5344,7 +5345,7 @@ int md_send_suspend(struct mddev *mddev, int bmpno, unsigned long long sus_start
 	suspend->bitmap = cpu_to_le32(bmpno);
 	suspend->low = cpu_to_le64(sus_start);
 	suspend->high = cpu_to_le64(sus_end);
-	msg->len = sizeof(struct );
+	msg->len = sizeof(struct cluster_msg);
 	INIT_LIST_HEAD(&msg->list);
 	init_waitqueue_head(&msg->waiter);
 	msg->sent = 0;
@@ -5352,7 +5353,7 @@ int md_send_suspend(struct mddev *mddev, int bmpno, unsigned long long sus_start
 	list_add_tail(&msg->list, &mddev->send_list);
 	spin_unlock(&mddev->send_lock);
 	md_wakeup_thread(mddev->send_thread);
-	wait_event(&msg->waiter, msg->sent != 0);
+	wait_event(msg->waiter, msg->sent != 0);
 	kfree(msg->buf);
 	kfree(msg);
 	return 0;
@@ -6922,7 +6923,7 @@ static int md_open(struct block_device *bdev, fmode_t mode)
 	check_disk_change(bdev);
 	mddev->dlm_md_lockspace = md_get_lockspace();
 	mddev->sb_mutex = md_get_sb_mutex();
-	mddev->dlm_md_meta = md_get_sb_lock();
+	mddev->dlm_md_meta = md_get_mddev_sb_lock();
  out:
 	return err;
 }
@@ -7596,7 +7597,7 @@ void md_do_sync(struct md_thread *thread)
 	int ret = -EAGAIN, i, ii;
 	struct dlm_lock_resource *res;
 	struct dlm_md_msg *msg;
-	struct msg_resync_finish *resync;
+	struct cluster_msg *resync;
 	struct bitmap *bmp = mddev->bitmap;
 
 	/* just incase thread restarts... */
@@ -7909,7 +7910,7 @@ void md_do_sync(struct md_thread *thread)
 		INIT_LIST_HEAD(&msg->list);
 		init_waitqueue_head(&msg->waiter);
 		msg->sent = 0;
-		resync = kzalloc(sizeof(struct msg_resync_finish), GFP_KERNEL);
+		resync = kzalloc(sizeof(struct cluster_msg), GFP_KERNEL);
 		if (!resync) {
 			kfree(msg);
 			printk(KERN_WARNING "allocate memory for message failed!\n");
@@ -7918,12 +7919,12 @@ void md_do_sync(struct md_thread *thread)
 		msg->buf = resync;
 		resync->type = cpu_to_le32(RESYNC_FINISHED);
 		resync->bitmap = cpu_to_le32(mddev->avail_bitmap[i]);
-		msg->len = sizeof(struct msg_resync_finish);
+		msg->len = sizeof(struct cluster_msg);
 		spin_lock(&mddev->send_lock);
 		list_add_tail(&msg->list, &mddev->send_list);
 		spin_unlock(&mddev->send_lock);
 		md_wakeup_thread(mddev->send_thread);
-		wait_event(&msg->waiter, msg->sent != 0);
+		wait_event(msg->waiter, msg->sent != 0);
 		kfree(msg->buf);
 		kfree(msg);
 	}
@@ -7995,7 +7996,7 @@ void md_do_sync(struct md_thread *thread)
 			res->mode = DLM_LOCK_EX;
 			res->finished = 0;
 			res->flags = DLM_LKF_CONVERT | DLM_LKF_NOQUEUE;
-			ret = bitmp_lock_sync(res);
+			ret = bitmap_lock_sync(res);
 			if (!ret) {
 				bmp->used = mddev->avail_bitmap[i];
 				wake_up(&mddev->bitmap_wait);
@@ -8119,7 +8120,7 @@ void md_check_recovery(struct mddev *mddev)
 		return;
 
 	if (mddev->bitmap && mddev->bitmap->used != -1)
-		bitmap_daemon_work(mddev, bitmap->used);
+		bitmap_daemon_work(mddev, mddev->bitmap->used);
 
 	if (signal_pending(current)) {
 		if (mddev->pers->sync_request && !mddev->external) {
@@ -8923,15 +8924,15 @@ static int __init md_init(void)
 	if (ret) {
 		goto err_mdp;
 	}
-	sb_lock = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
-	if (!sb_lock) {
+	mddev_sb_lock = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
+	if (!mddev_sb_lock) {
 		dlm_release_lockspace(md_lockspace, 3);
 		goto err_mdp;
 	}
-	INIT_LIST_HEAD(&sb_lock->list);
-	init_waitqueue_head(&sb_lock->waiter);
-	sb_lock->name = "cmd-super";
-	sb_lock->namelen = strlen("cmd-super");
+	INIT_LIST_HEAD(&mddev_sb_lock->list);
+	init_waitqueue_head(&mddev_sb_lock->waiter);
+	mddev_sb_lock->name = "cmd-super";
+	mddev_sb_lock->namelen = strlen("cmd-super");
 	mutex_init(&sb_mutex);
 
 	md_geninit();
@@ -8952,7 +8953,7 @@ void sync_ast(void *arg)
 	struct dlm_lock_resource *res;
 	res = (struct dlm_lock_resource *) arg;
 	res->finished = 1;
-	wake_up(&res_waiter);
+	wake_up(&res->waiter);
 }
 
 /* 0 for successful lock.
@@ -8968,7 +8969,7 @@ int dlm_lock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 	if (ret) {
 		return ret;
 	}
-	wait_event(&res->waiter, res->finished == 1);
+	wait_event(res->waiter, res->finished == 1);
 	return res->lksb.sb_status;
 }
 
@@ -8980,7 +8981,7 @@ int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 	if (ret) {
 		return ret;
 	}
-	wait_event(&res->waiter, res->finished == 1);
+	wait_event(res->waiter, res->finished == 1);
 	return res->lksb.sb_status;
 }
 
@@ -8989,9 +8990,9 @@ dlm_lockspace_t *md_get_lockspace(void)
 	return md_lockspace;
 }
 
-struct dlm_lock_resource *md_get_sb_lock(void)
+struct dlm_lock_resource *md_get_mddev_sb_lock(void)
 {
-	return sb_lock;
+	return mddev_sb_lock;
 }
 
 struct mutex *md_get_sb_mutex(void)
@@ -9000,28 +9001,28 @@ struct mutex *md_get_sb_mutex(void)
 }
 
 EXPORT_SYMBOL(md_get_lockspace);
-EXPORT_SYMBOL(md_get_sb_lock);
-EXPORT_SYMBOL(md_get_mutex);
+EXPORT_SYMBOL(md_get_mddev_sb_lock);
 
 int md_lock_super(struct mddev *mddev, int mode)
 {
 	struct mutex *sb_mutex = mddev->sb_mutex;
-	struct dlm_lock_resource *sb_lock = mddev->dlm_md_meta;
+	struct dlm_lock_resource *mddev_sb_lock = mddev->dlm_md_meta;
 	dlm_lockspace_t *md_lockspace = mddev->dlm_md_lockspace;
+	int ret;
 
 	mutex_lock(sb_mutex);
-	sb_lock->state = 0;
-	sb_lock->finished = 0;
-	sb_lock->mode = mode;
-	sb_lock->flags = 0;
-	sb_lock->parent_lkid = 0;
-	memset(&sb_lock->lksb, 0, sizeof(struct dlm_lksb));
+	mddev_sb_lock->state = 0;
+	mddev_sb_lock->finished = 0;
+	mddev_sb_lock->mode = mode;
+	mddev_sb_lock->flags = 0;
+	mddev_sb_lock->parent_lkid = 0;
+	memset(&mddev_sb_lock->lksb, 0, sizeof(struct dlm_lksb));
 	while (ret && ret == -EAGAIN) {
-		ret = dlm_lock_sync(md_lockspace, sb_lock);
+		ret = dlm_lock_sync(md_lockspace, mddev_sb_lock);
 	}
 	if (ret) {
-		printk(KERN_WARNING "dlm lock error: %s", strerror(ret));
-		mutex_unlock(&sb_mutex);
+		printk(KERN_WARNING "dlm lock error");
+		mutex_unlock(sb_mutex);
 	}
 	return ret;
 }
@@ -9029,10 +9030,10 @@ int md_lock_super(struct mddev *mddev, int mode)
 void md_unlock_super(struct mddev *mddev)
 {
 	struct mutex *sb_mutex = mddev->sb_mutex;
-	struct dlm_lock_resource *sb_lock = mddev->dlm_md_meta;
+	struct dlm_lock_resource *mddev_sb_lock = mddev->dlm_md_meta;
 	dlm_lockspace_t *md_lockspace = mddev->dlm_md_lockspace;
 
-	dlm_unlock_sync(md_lockspace, sb_lock);
+	dlm_unlock_sync(md_lockspace, mddev_sb_lock);
 	mutex_unlock(sb_mutex);
 }
 
@@ -9125,7 +9126,7 @@ static __exit void md_exit(void)
 	destroy_workqueue(md_misc_wq);
 	destroy_workqueue(md_wq);
 	dlm_release_lockspace(md_lockspace, 3);
-	kfree(sb_lock);
+	kfree(mddev_sb_lock);
 }
 
 subsys_initcall(md_init);
@@ -9145,6 +9146,48 @@ static int set_ro(const char *val, struct kernel_param *kp)
 	}
 	return -EINVAL;
 }
+
+struct dlm_lock_resource *init_lock_resource(struct mddev *mddev, char *name)
+{
+	struct dlm_lock_resource *ret = NULL;
+	int i = 0;
+	ret = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
+	if (!ret) {
+		return ret;
+	}
+	INIT_LIST_HEAD(&ret->list);
+	init_waitqueue_head(&ret->waiter);
+	ret->mddev = mddev;
+	/* uuid.name */
+	ret->name = kzalloc(strlen(name) + 34, GFP_KERNEL);
+	if (!ret->name) {
+		kfree(ret);
+		return NULL;
+	}
+	for ( ; i < 16; i++) {
+		sprintf(ret->name + i * 2, "%02x", mddev->uuid[i]);
+	}
+	ret->name[32] = '.';
+	memcpy(ret->name + 33, name, strlen(name));
+	return ret;
+}
+EXPORT_SYMBOL(init_lock_resource);
+
+void deinit_lock_resource(struct dlm_lock_resource *res)
+{
+	if (!res) {
+		return;
+	}
+	if (res->name) {
+		kfree(res->name);
+	}
+	if (res->lksb.sb_lvbptr) {
+		kfree(res->lksb.sb_lvbptr);
+	}
+	kfree(res);
+	return;
+}
+EXPORT_SYMBOL(deinit_lock_resource);
 
 module_param_call(start_ro, set_ro, get_ro, NULL, S_IRUSR|S_IWUSR);
 module_param(start_dirty_degraded, int, S_IRUGO|S_IWUSR);
