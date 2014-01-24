@@ -2321,6 +2321,7 @@ read_more:
 
 int handle_metadata_update(struct mddev *mddev, struct msg_entry *entry)
 {
+	return 0;
 }
 
 int handle_resync_finished(struct mddev *mddev, struct msg_entry *entry)
