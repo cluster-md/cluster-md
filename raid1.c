@@ -1068,17 +1068,10 @@ static void make_request(struct mddev *mddev, struct bio * bio)
 	if (test_bit(MD_NODE_SYNCING, &mddev->flags)) {
 		list_for_each_entry(suspend, 
 				&mddev->suspend_range, list)
-			if (rw == WRITE && bio->bi_sector < suspend->high &&
+			if (bio->bi_sector < suspend->high &&
 					bio_end_sector(bio) > suspend->low) {
 				list_add(&r1_bio->retry_list, &conf->retry_list);
 				conf->nr_queued++;
-				return;
-			} else if (rw == READ && bio->bi_sector < suspend->high 
-					&& bio_end_sector(bio) > suspend->low) {
-				//TODO
-				/*
-				 * select the wright device to read
-				 **/
 				return;
 			}
 	}
@@ -2418,6 +2411,25 @@ static void raid1d(struct md_thread *thread)
 				break;
 			}
 		}
+	} else {
+		/*get CR lock on some node that fails*/
+		for (i = 0; i < mddev->bitmap_info.nodes; i++) {
+			if (mddev->avail_bitmap[i] == -1) {
+				continue;
+			}
+			res = find_bitmap_by_node(mddev, mddev->avail_bitmap[i]);
+			res->mode = DLM_LOCK_PW;
+			res->finished = 0;
+			res->flags = DLM_LKF_CONVERT | DLM_LKF_NOQUEUE;
+			ret = bitmap_lock_sync(res);
+			if (!ret) {
+				wake_up(&mddev->bitmap_wait);
+				break;
+			}
+		}
+		/*read disk bitmap and check if there should do a resync.
+		  if should, then first send a suspend message.After the sync, 
+		  send a sync finish message*/
 	}
 	mutex_unlock(&mddev->avail_mutex);
 
@@ -3109,68 +3121,70 @@ static void raid1_sendd(struct md_thread *thread)
 		return;
 	}
 
-	/*Get EX on Token*/
-	token->state = 0;
-	token->mode = DLM_LOCK_EX;
-	token->flags = 0;
-	token->parent_lkid = 0;
-	if (dlm_lock_sync(mddev->dlm_md_lockspace, token)) {
-		printk(KERN_ERR "md/raid1:failed to get EX on TOKEN\n");
-		return;
-	}
+	while (!list_empty(&mddev->send_list)) {
+		/*Get EX on Token*/
+		token->state = 0;
+		token->mode = DLM_LOCK_EX;
+		token->flags = 0;
+		token->parent_lkid = 0;
+		if (dlm_lock_sync(mddev->dlm_md_lockspace, token)) {
+			printk(KERN_ERR "md/raid1:failed to get EX on TOKEN\n");
+			return;
+		}
 
-	msg = list_entry(mddev->send_list.next,
-			struct dlm_md_msg,
-			list);
+		spin_lock(&mddev->send_lock);
+		msg = list_entry(mddev->send_list.next,
+			struct dlm_md_msg, list);
+		spin_unlock(&mddev->send_lock);
 
+		/*get EX on Message*/
+		message->state = 0;
+		message->mode = DLM_LOCK_EX;
+		message->flags = 0;
+		message->parent_lkid = 0;
+		message->bast = NULL;
+		if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
+			printk(KERN_ERR "md/raid1:failed to get EX on MESSAGE\n");
+			goto failed_message;
+		}
 
-	/*get EX on Message*/
-	message->state = 0;
-	message->mode = DLM_LOCK_EX;
-	message->flags = 0;
-	message->parent_lkid = 0;
-	message->bast = NULL;
-	if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
-		printk(KERN_ERR "md/raid1:failed to get EX on MESSAGE\n");
-		goto failed_message;
-	}
+		/*down-convert EX to CR on Message*/
+		message->mode = DLM_LOCK_CR;
+		message->flags = DLM_LKF_CONVERT|DLM_LKF_VALBLK;
+		memcpy(&message->lksb.sb_lvbptr, msg->buf, sizeof(struct cluster_msg));
+		if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
+			printk(KERN_ERR "md/raid1:failed to convert EX to CR on MESSAGE\n");
+			goto failed_message;
+		}
 
-	/*down-convert EX to CR on Message*/
-	message->mode = DLM_LOCK_CR;
-	message->flags = DLM_LKF_CONVERT|DLM_LKF_VALBLK;
-	memcpy(&message->lksb.sb_lvbptr, msg->buf, sizeof(struct cluster_msg));
-	if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
-		printk(KERN_ERR "md/raid1:failed to convert EX to CR on MESSAGE\n");
-		goto failed_message;
-	}
+		/*up-convert CR to EX on Ack*/
+		ack->state = 0;
+		ack->mode = DLM_LOCK_EX;
+		ack->flags = DLM_LKF_CONVERT;
+		ack->parent_lkid = 0;
+		if (dlm_lock_sync(mddev->dlm_md_lockspace, ack)) {
+			printk(KERN_ERR "md/raid1:failed to convert CR to EX on ACK\n");
+			goto failed_ack;
+		}
 
-	/*up-convert CR to EX on Ack*/
-	ack->state = 0;
-	ack->mode = DLM_LOCK_EX;
-	ack->flags = DLM_LKF_CONVERT;
-	ack->parent_lkid = 0;
-	if (dlm_lock_sync(mddev->dlm_md_lockspace, ack)) {
-		printk(KERN_ERR "md/raid1:failed to convert CR to EX on ACK\n");
-		goto failed_ack;
-	}
+		/*down-convert EX to CR on Ack*/
+		ack->mode = DLM_LOCK_CR;
+		ack->flags = DLM_LKF_CONVERT;
+		ack->bast = wait_for_receive_message;
+		if (dlm_lock_sync(mddev->dlm_md_lockspace, ack)) {
+			printk(KERN_ERR "md/raid1:failed to convert EX to CR on ACK\n");
+			goto failed_ack;
+		}
 
-	/*down-convert EX to CR on Ack*/
-	ack->mode = DLM_LOCK_CR;
-	ack->flags = DLM_LKF_CONVERT;
-	ack->bast = wait_for_receive_message;
-	if (dlm_lock_sync(mddev->dlm_md_lockspace, ack)) {
-		printk(KERN_ERR "md/raid1:failed to convert EX to CR on ACK\n");
-		goto failed_ack;
-	}
-
-	msg->sent = 1;
-	wake_up(&msg->waiter);
-	list_del(&msg->list);
-	dlm_unlock_sync(mddev->dlm_md_lockspace, ack);
+		msg->sent = 1;
+		wake_up(&msg->waiter);
+		list_del(&msg->list);
+		dlm_unlock_sync(mddev->dlm_md_lockspace, ack);
 failed_ack:
-	dlm_unlock_sync(mddev->dlm_md_lockspace, message);
+		dlm_unlock_sync(mddev->dlm_md_lockspace, message);
 failed_message:
-	dlm_unlock_sync(mddev->dlm_md_lockspace, token);
+		dlm_unlock_sync(mddev->dlm_md_lockspace, token);
+	}
 }
 
 
