@@ -3121,6 +3121,7 @@ static void raid1_sendd(struct md_thread *thread)
 		return;
 	}
 
+	spin_lock(&mddev->send_lock);
 	while (!list_empty(&mddev->send_list)) {
 		/*Get EX on Token*/
 		token->state = 0;
@@ -3132,10 +3133,8 @@ static void raid1_sendd(struct md_thread *thread)
 			return;
 		}
 
-		spin_lock(&mddev->send_lock);
 		msg = list_entry(mddev->send_list.next,
 			struct dlm_md_msg, list);
-		spin_unlock(&mddev->send_lock);
 
 		/*get EX on Message*/
 		message->state = 0;
@@ -3179,12 +3178,15 @@ static void raid1_sendd(struct md_thread *thread)
 		msg->sent = 1;
 		wake_up(&msg->waiter);
 		list_del(&msg->list);
+		spin_unlock(&mddev->send_lock);
 		dlm_unlock_sync(mddev->dlm_md_lockspace, ack);
 failed_ack:
 		dlm_unlock_sync(mddev->dlm_md_lockspace, message);
 failed_message:
 		dlm_unlock_sync(mddev->dlm_md_lockspace, token);
+		spin_lock(&mddev->send_lock);
 	}
+	spin_unlock(&mddev->send_lock);
 }
 
 
