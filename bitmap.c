@@ -2046,6 +2046,9 @@ void bitmap_ast(void *arg)
 	if (!res->lksb.sb_status) {
 		if (res->mode == DLM_LOCK_CR) {
 			mutex_lock(&mddev->avail_mutex);
+			/* may need to reload bitmap from 
+			 * disk somewhere. since this can be
+			 * node failure. */
 			bitmap_add_avail_bitmap(mddev, res->index);
 			mutex_unlock(&mddev->avail_mutex);
 			md_wakeup_thread(mddev->thread);

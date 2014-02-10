@@ -9035,6 +9035,18 @@ void md_unlock_super(struct mddev *mddev)
 	mutex_unlock(sb_mutex);
 }
 
+void md_reload_superblock(struct mddev *mddev)
+{
+	struct md_rdev *rdev, *tmp;
+
+	rdev_for_each_safe(rdev, tmp, mddev) {
+		rdev->sb_loaded = 0;
+	}
+	mddev->raid_disks = 0;
+	analyze_sbs(mddev);
+}
+
+EXPORT_SYMBOL(md_reload_superblock);
 
 #ifndef MODULE
 

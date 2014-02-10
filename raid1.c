@@ -2319,6 +2319,7 @@ read_more:
 
 int handle_metadata_update(struct mddev *mddev, struct msg_entry *entry)
 {
+	md_reload_superblock(mddev);
 	return 0;
 }
 
