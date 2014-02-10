@@ -1685,10 +1685,8 @@ static void end_sync_write(struct bio *bio, int error)
 		/* make sure these bits doesn't get cleared. */
 		do {
 			/* COMPILE */
-			/*
-			bitmap_end_sync(mddev->bitmap, s,
+			bitmap_end_sync(mddev->bitmap, mddev->bitmap->used, s,
 					&sync_blocks, 1);
-					*/
 			s += sync_blocks;
 			sectors_to_go -= sync_blocks;
 		} while (sectors_to_go > 0);
@@ -2314,13 +2312,15 @@ read_more:
 
 int handle_metadata_update(struct mddev *mddev, struct msg_entry *entry)
 {
+	md_reload_superblock(mddev);
+	return 0;
 }
 
 int handle_resync_finished(struct mddev *mddev, struct msg_entry *entry)
 {
 	struct cluster_msg *msg = (struct cluster_msg *)entry->buf;
 	int bmpno = le32_to_cpu(msg->bitmap);
-	struct suspend_range_list *tmp, *suspend;
+	struct suspend_range_list *tmp = NULL, *suspend;
 	int ret = 0;
 
 	list_for_each_entry(suspend, &mddev->suspend_range, list)
@@ -2439,6 +2439,7 @@ static void raid1d(struct md_thread *thread)
 			continue;
 		}
 		/* COMPILE */
+		/* theoritically, this cannot happen. */
 		if (mddev->reclaim_bitmap[i] == bmp->used) {
 			mddev->reclaim_bitmap[i] = -1;
 			continue;
@@ -3048,7 +3049,7 @@ static struct r1conf *setup_conf(struct mddev *mddev)
 /*
  * wake up recv thread here
  * */
-static void wait_for_receive_message(void *arg)
+static void wait_for_receive_message(void *arg, int mode)
 {
 	struct dlm_lock_resource *res = (struct dlm_lock_resource *)arg;
 	struct mddev *mddev = res->mddev;
@@ -3311,7 +3312,7 @@ static int run(struct mddev *mddev)
 	res->parent_lkid = 0;
 	res->state = 0;
 	res->bast = wait_for_receive_message;
-	if (dlm_lock_sync(mddev->dlm_md_lockspace, &res)) {
+	if (dlm_lock_sync(mddev->dlm_md_lockspace, res)) {
 		printk(KERN_ERR "failed to get a sync CR lock on ACK!\n");
 	}
 	return ret;

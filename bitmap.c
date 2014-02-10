@@ -192,11 +192,7 @@ static int write_sb_page(struct bitmap *bitmap, struct page *page, int wait)
 	struct block_device *bdev;
 	struct mddev *mddev = bitmap->mddev;
 	struct bitmap_storage *store = &bitmap->storage;
-	int ret = -EAGAIN;
 
-	ret = md_lock_super(bitmap->mddev, DLM_LOCK_EX);
-	if (ret) 
-		return ret;
 
 	while ((rdev = next_active_rdev(rdev, mddev)) != NULL) {
 		int size = PAGE_SIZE;
@@ -255,11 +251,9 @@ static int write_sb_page(struct bitmap *bitmap, struct page *page, int wait)
 
 	if (wait)
 		md_super_wait(mddev);
-	md_unlock_super(mddev);
 	return 0;
 
  bad_alignment:
- 	md_unlock_super(mddev);
 	return -EINVAL;
 }
 
@@ -588,7 +582,6 @@ static int bitmap_read_sb(struct bitmap *bitmap)
 	bitmap_super_t *sb;
 	unsigned long chunksize, daemon_sleep, write_behind;
 	int nodes;
-	unsigned long long events;
 	unsigned long sectors_reserved = 0;
 	int err = -EINVAL;
 	struct page *sb_page;
@@ -1046,6 +1039,7 @@ static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
 		/* No permanent bitmap - fill with '1s'. */
 		store->filemap = NULL;
 		store->file_pages = 0;
+#if 0
 		for (i = 0; i < chunks ; i++) {
 			/* if the disk bit is set, set the memory bit */
 			int needed = ((sector_t)(i+1) << (bitmap->counts.chunkshift)
@@ -1057,6 +1051,7 @@ static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
 					       needed);
 					       */
 		}
+#endif
 		return 0;
 	}
 
@@ -1129,7 +1124,7 @@ static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
 					outofdate = test_bit(BITMAP_STALE, &info->flags);
 					if (outofdate) {
 						printk(KERN_INFO "%s: bitmap file for node "
-						"%d is out of date, doing full "
+						"%ld is out of date, doing full "
 						"recovery\n", bmname(bitmap), j);
 						info->events_cleared = mddev->events;
 					}
@@ -1250,6 +1245,7 @@ void bitmap_daemon_work(struct mddev *mddev, int node)
 	/* Use a mutex to guard daemon_work against
 	 * bitmap_destroy.
 	 */
+	bitmap = mddev->bitmap;
 	info = &bitmap->events[node];
 	mutex_lock(&mddev->bitmap_info.mutex);
 	bitmap = mddev->bitmap;
@@ -1324,11 +1320,11 @@ void bitmap_daemon_work(struct mddev *mddev, int node)
 
 		if (j == nextpage) {
 			nextpage += PAGE_COUNTER_RATIO;
-			if (!counts->bp[j >> PAGE_COUNTER_SHIFT + counts->pages * node].pending) {
+			if (!counts->bp[(j >> PAGE_COUNTER_SHIFT) + counts->pages * node].pending) {
 				j |= PAGE_COUNTER_MASK;
 				continue;
 			}
-			counts->bp[j >> PAGE_COUNTER_SHIFT + counts->pages * node].pending = 0;
+			counts->bp[(j >> PAGE_COUNTER_SHIFT) + counts->pages * node].pending = 0;
 		}
 		bmc = bitmap_get_counter(counts, node,
 					 block,
@@ -1826,7 +1822,7 @@ int bitmap_create(struct mddev *mddev)
 	struct file *file = mddev->bitmap_info.file;
 	int err;
 	struct sysfs_dirent *bm = NULL;
-	int i, j;
+	int i;
 	struct dlm_lock_resource *res;
 	char name[11]; /* bitmapxxxx */
 
@@ -2050,6 +2046,9 @@ void bitmap_ast(void *arg)
 	if (!res->lksb.sb_status) {
 		if (res->mode == DLM_LOCK_CR) {
 			mutex_lock(&mddev->avail_mutex);
+			/* may need to reload bitmap from 
+			 * disk somewhere. since this can be
+			 * node failure. */
 			bitmap_add_avail_bitmap(mddev, res->index);
 			mutex_unlock(&mddev->avail_mutex);
 			md_wakeup_thread(mddev->thread);
@@ -2065,7 +2064,7 @@ void bitmap_ast(void *arg)
 	return;
 }
 
-void bitmap_bast(void *arg)
+void bitmap_bast(void *arg, int mode)
 {
 	struct dlm_lock_resource *res;
 	struct mddev *mddev;
@@ -2287,7 +2286,7 @@ int bitmap_resize(struct bitmap *bitmap, sector_t blocks,
 	struct bitmap_storage store;
 	struct bitmap_counts old_counts;
 	unsigned long chunks, bitmap_len;
-	sector_t block;
+	sector_t block = 0;
 	sector_t old_blocks, new_blocks;
 	int node;
 	int chunkshift;
