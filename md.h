@@ -215,7 +215,7 @@ struct dlm_lock_resource {
 	struct dlm_lksb lksb;
 	uint32_t parent_lkid;
 	struct mddev *mddev; /* pointing back to mddev. */
-	void (*bast)(void *arg); /*bast for sync lock*/
+	void (*bast)(void *arg, int mode); /*bast for sync lock*/
 };
 
 struct dlm_md_msg {
@@ -732,6 +732,7 @@ extern int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
 extern int md_lock_super(struct mddev *mddev, int mode);
 extern void md_unlock_super(struct mddev *mddev);
 extern int md_send_metadata_update(struct mddev *mddev, int async);
+extern void md_reload_superblock(struct mddev *mddev);
 /* FIXME? are these internal functions */
 extern dlm_lockspace_t *md_get_lockspace(void);
 extern struct mutex *md_get_sb_mutex(void);
