@@ -4159,9 +4159,7 @@ bitmap_store(struct mddev *mddev, const char *buf, size_t len)
 			if (buf == end) break;
 		}
 		if (*end && !isspace(*end)) break;
-		/* COMPILE 
-		bitmap_dirty_bits(mddev->bitmap, chunk, end_chunk);
-		*/
+		bitmap_dirty_bits(mddev->bitmap, mddev->bitmap->used, chunk, end_chunk);
 		buf = skip_spaces(end);
 	}
 	bitmap_unplug(mddev->bitmap); /* flush the bits to disk */
@@ -5248,7 +5246,6 @@ int md_run(struct mddev *mddev)
 		}
 	}
 
-out:
 	md_new_event(mddev);
 	sysfs_notify_dirent_safe(mddev->sysfs_state);
 	sysfs_notify_dirent_safe(mddev->sysfs_action);
@@ -5313,7 +5310,7 @@ int md_send_resync_finished(struct mddev *mddev, int bmpno)
 		printk(KERN_WARNING "allocate memory for message failed!\n");
 		return -ENOMEM;
 	}
-	msg->buf = resync;
+	msg->buf = (char *)resync;
 	resync->type = cpu_to_le32(RESYNC_FINISHED);
 	resync->bitmap = cpu_to_le32(bmpno);
 	spin_lock(&mddev->send_lock);
@@ -7596,8 +7593,6 @@ void md_do_sync(struct md_thread *thread)
 	struct blk_plug plug;
 	int ret = -EAGAIN, i, ii;
 	struct dlm_lock_resource *res;
-	struct dlm_md_msg *msg;
-	struct cluster_msg *resync;
 	struct bitmap *bmp = mddev->bitmap;
 
 	/* just incase thread restarts... */
@@ -7902,6 +7897,8 @@ void md_do_sync(struct md_thread *thread)
 		if (mddev->avail_bitmap[i] == -1) {
 			continue;
 		}
+		md_send_resync_finished(mddev, mddev->avail_bitmap[i]);
+		/*
 		msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
 		if (!msg) {
 			printk(KERN_WARNING "allocate memory for message failed!\n");
@@ -7927,6 +7924,7 @@ void md_do_sync(struct md_thread *thread)
 		wait_event(msg->waiter, msg->sent != 0);
 		kfree(msg->buf);
 		kfree(msg);
+		*/
 	}
 	/* may need to send out suspend message
 	 * with 0 - 0 range? 
@@ -9008,7 +9006,7 @@ int md_lock_super(struct mddev *mddev, int mode)
 	struct mutex *sb_mutex = mddev->sb_mutex;
 	struct dlm_lock_resource *mddev_sb_lock = mddev->dlm_md_meta;
 	dlm_lockspace_t *md_lockspace = mddev->dlm_md_lockspace;
-	int ret;
+	int ret = -EAGAIN;
 
 	mutex_lock(sb_mutex);
 	mddev_sb_lock->state = 0;

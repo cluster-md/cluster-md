@@ -215,7 +215,7 @@ struct dlm_lock_resource {
 	struct dlm_lksb lksb;
 	uint32_t parent_lkid;
 	struct mddev *mddev; /* pointing back to mddev. */
-	void (*bast)(void *arg); /*bast for sync lock*/
+	void (*bast)(void *arg, int mode); /*bast for sync lock*/
 };
 
 struct dlm_md_msg {
