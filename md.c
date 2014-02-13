@@ -7996,7 +7996,6 @@ void md_do_sync(struct md_thread *thread)
 			res->flags = DLM_LKF_CONVERT | DLM_LKF_NOQUEUE;
 			ret = bitmap_lock_sync(res);
 			if (!ret) {
-				bmp->used = mddev->avail_bitmap[i];
 				wake_up(&mddev->bitmap_wait);
 				/* exclude this from avail bitmaps? */
 				mddev->avail_bitmap[i] = -1;
