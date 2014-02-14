@@ -9160,6 +9160,7 @@ struct dlm_lock_resource *init_lock_resource(struct mddev *mddev, char *name)
 {
 	struct dlm_lock_resource *ret = NULL;
 	int i = 0;
+	int len = strlen(name);
 	ret = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
 	if (!ret) {
 		return ret;
@@ -9168,7 +9169,7 @@ struct dlm_lock_resource *init_lock_resource(struct mddev *mddev, char *name)
 	init_waitqueue_head(&ret->waiter);
 	ret->mddev = mddev;
 	/* uuid.name */
-	ret->name = kzalloc(strlen(name) + 34, GFP_KERNEL);
+	ret->name = kzalloc(len + 34, GFP_KERNEL);
 	if (!ret->name) {
 		kfree(ret);
 		return NULL;
@@ -9177,7 +9178,9 @@ struct dlm_lock_resource *init_lock_resource(struct mddev *mddev, char *name)
 		sprintf(ret->name + i * 2, "%02x", mddev->uuid[i]);
 	}
 	ret->name[32] = '.';
-	memcpy(ret->name + 33, name, strlen(name));
+	memcpy(ret->name + 33, name, len);
+	ret->name[len+33] = '\0';
+	ret->namelen = len + 33;
 	return ret;
 }
 EXPORT_SYMBOL(init_lock_resource);
