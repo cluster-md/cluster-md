@@ -14,7 +14,7 @@
 
 
 2. sender get EX of TOKEN
-
+   sender get EX of MESSAGE
    sender                                         receiver                   receiver
    TOKEN:EX                                       ACK:CR                     ACK:CR
    MESSAGE:EX
