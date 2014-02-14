@@ -3344,7 +3344,7 @@ static int stop(struct mddev *mddev)
 	raise_barrier(conf);
 	lower_barrier(conf);
 
-	dlm_unlock_sync(mddev->dlm_md_lockspace, mddev->dlm_md_message);
+	dlm_unlock_sync(mddev->dlm_md_lockspace, mddev->dlm_md_ack);
 	md_unregister_thread(&mddev->thread);
 	md_unregister_thread(&mddev->recv_thread);
 	md_unregister_thread(&mddev->send_thread);
