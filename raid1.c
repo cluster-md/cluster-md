@@ -3111,6 +3111,12 @@ static void raid1_sendd(struct md_thread *thread)
 
 	spin_lock(&mddev->send_lock);
 	while (!list_empty(&mddev->send_list)) {
+		msg = list_entry(mddev->send_list.next,
+				struct dlm_md_msg,
+				list);
+		list_del(&msg->list);
+		spin_unlock(&mddev->send_lock);
+
 		/*Get EX on Token*/
 		token->state = 0;
 		token->mode = DLM_LOCK_EX;
@@ -3120,10 +3126,6 @@ static void raid1_sendd(struct md_thread *thread)
 			printk(KERN_ERR "md/raid1:failed to get EX on TOKEN\n");
 			return;
 		}
-
-		msg = list_entry(mddev->send_list.next,
-				struct dlm_md_msg,
-				list);
 
 
 		/*get EX on Message*/
@@ -3169,8 +3171,6 @@ static void raid1_sendd(struct md_thread *thread)
 			goto failed_ack;
 		}
 
-		list_del(&msg->list);
-		spin_unlock(&mddev->send_lock);
 		msg->sent = 1;
 		wake_up(&msg->waiter);
 		dlm_unlock_sync(mddev->dlm_md_lockspace, ack);
@@ -3178,8 +3178,8 @@ static void raid1_sendd(struct md_thread *thread)
 		dlm_unlock_sync(mddev->dlm_md_lockspace, message);
  failed_message:
 		dlm_unlock_sync(mddev->dlm_md_lockspace, token);
-		if (error) break;
 		spin_lock(&mddev->send_lock);
+		if (error) break;
 	}
 	spin_unlock(&mddev->send_lock);
 }
