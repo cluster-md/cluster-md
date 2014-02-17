@@ -3143,7 +3143,7 @@ static void raid1_sendd(struct md_thread *thread)
 		/*down-convert EX to CR on Message*/
 		message->mode = DLM_LOCK_CR;
 		message->flags = DLM_LKF_CONVERT|DLM_LKF_VALBLK;
-		memcpy(&message->lksb.sb_lvbptr, msg->buf, sizeof(struct cluster_msg));
+		memcpy(message->lksb.sb_lvbptr, msg->buf, sizeof(struct cluster_msg));
 		if (dlm_lock_sync(mddev->dlm_md_lockspace, message)) {
 			printk(KERN_ERR "md/raid1:failed to convert EX to CR on MESSAGE\n");
 			error = 1;
@@ -3171,13 +3171,12 @@ static void raid1_sendd(struct md_thread *thread)
 			goto failed_ack;
 		}
 
-		msg->sent = 1;
-		wake_up(&msg->waiter);
-		dlm_unlock_sync(mddev->dlm_md_lockspace, ack);
  failed_ack:
 		dlm_unlock_sync(mddev->dlm_md_lockspace, message);
  failed_message:
 		dlm_unlock_sync(mddev->dlm_md_lockspace, token);
+		msg->sent = 1;
+		wake_up(&msg->waiter);
 		spin_lock(&mddev->send_lock);
 		if (error) break;
 	}
