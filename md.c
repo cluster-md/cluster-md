@@ -8974,7 +8974,7 @@ int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 {
 	int ret = 0;
 	res->finished = 0;
-	ret = dlm_unlock(ls, res->lksb.sb_lkid, res->flags, &res->lksb, res);
+	ret = dlm_unlock(ls, res->lksb.sb_lkid, 0, &res->lksb, res);
 	if (ret) {
 		return ret;
 	}
