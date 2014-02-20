@@ -8896,7 +8896,7 @@ static int __init md_init(void)
 	}
 	mddev_sb_lock = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
 	if (!mddev_sb_lock) {
-		dlm_release_lockspace(md_lockspace, 3);
+		dlm_release_lockspace(md_lockspace, 0);
 		goto err_mdp;
 	}
 	INIT_LIST_HEAD(&mddev_sb_lock->list);
@@ -9109,7 +9109,7 @@ static __exit void md_exit(void)
 	}
 	destroy_workqueue(md_misc_wq);
 	destroy_workqueue(md_wq);
-	dlm_release_lockspace(md_lockspace, 3);
+	dlm_release_lockspace(md_lockspace, 0);
 	kfree(mddev_sb_lock);
 }
 
