@@ -29,7 +29,7 @@
                                                            [ triggered by bast of ACK ]
                                                            receiver get CR of MESSAGE
                                                            receiver read LVB
-                                                           receiver *processed* the LVB
+                                                           receiver *processed* the message(handler will be called)
 							   [ wait finish ]
                                                            receiver release ACK
 

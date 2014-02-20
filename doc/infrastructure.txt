@@ -1,0 +1,92 @@
+# Basic ideas
+
+# struct of bitmap
+
+N is the maxium nodes number we support.
+we have N events_counter_s.
+
+... is the bitmap content.
+
+	4K IDLE
+	4K md_super_block
+	4K BBL
+	4K bitmap_super_s
+	event_counter_s
+	...
+	event_counter_s
+	...
+	event_counter_s
+	...
+	event_counter_s
+	...
+
+# struct of event_counter_s
+
+event_counter_s is the on-disk struct
+
+	struct event_counter_s {
+	__le64 events;       /* 0  event counter for the bitmap (1)*/
+        __le64 events_cleared;/* 8  event counter when last bit cleared (2) */
+        __le32 state; /* 16 bitmap state info */
+	};
+
+the correspoding memory part of which is struct events_info.
+
+	struct events_info {
+        __u64 events_cleared;
+        unsigned long flags;
+        int allclean;
+        int need_sync;
+	};
+
+# changes about the struct bitmap(in memory)
+
+1. add struct events_info 
+
+2. add per_node_page/per_node_pages to bitmap_storage(used to write disk)
+
+3. add used: indicate which bitmap the node is using
+
+
+# DLM locks 
+
+1. dlm_md_resync        :only the node who get EX could start resync.
+2. dlm_md_meta          :only the node who get EX could write the metadata of mddev.
+3. dlm_md_message       :used for message passing
+4. dlm_md_token         :used for message passing
+5. dlm_md_ack           :used for message passing
+6. N * per-bitmap-lock  :every bitmap has its own lock.
+
+# bitmap functions
+
+1.AST of per-bitmap-lock
+  * Get Unlock
+  * Get CR successfully
+    set per-bitmap to available
+    (if we get CR, it is possible that we get a bitmap from a failed node)
+    wake up mddev->thread(raid1d) ??
+  * Get EX successfully(upconvert successfully)
+    set bitmap->used(the node finally know which bitmap it will operate on)
+  * Get PW successfully.
+    it looks we do not need this; if we use only 1 node to do recovery ??
+
+  if dlm call is sync:
+	wake up the lock caller ??
+  elif dlm call is async:
+        ??
+
+2.BAST of per-bitmap-lock
+  * remote node want a CR 
+    set per-bitmap to reclaim
+    wake up the lock caller ??
+    wake up the mddev->thread(raid1d)
+
+3.load_bitmap(bitmap.c)
+   get CR of each bitmap(sync|noqueue|persistent)
+       if get CR successfully
+           BAST of the per-bitmap-lock could work.
+       elif bitmap is occupied by other nodes
+           try to get CR of the per-bitmap-lock(async|queue|persistent)
+	
+
+# error handling
