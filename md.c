@@ -5323,7 +5323,7 @@ int md_send_resync_finished(struct mddev *mddev, int bmpno)
 	return 0;
 }
 
-int md_send_suspend(struct mddev *mddev, int bmpno, unsigned long long sus_start, unsigned long long sus_end)
+int md_send_suspend(struct mddev *mddev, int bmpno, sector_t sus_start, sector_t sus_end)
 {
 	struct dlm_md_msg *msg;
 	struct cluster_msg *suspend;

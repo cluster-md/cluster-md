@@ -247,15 +247,15 @@ struct msg_entry {
 struct cluster_msg {
 	int type;
 	int bitmap;
-	unsigned long long low;
-	unsigned long long high;
+	sector_t low;
+	sector_t high;
 };
 
 struct suspend_range_list {
 	struct list_head list;
 	int bitmap;
-	unsigned long long low;
-	unsigned long long high;
+	sector_t low;
+	sector_t high;
 };
 
 typedef int (*msg_handle)(struct mddev *mddev, struct msg_entry *entry);

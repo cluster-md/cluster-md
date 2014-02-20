@@ -2353,8 +2353,8 @@ int handle_suspend_range(struct mddev *mddev, struct msg_entry *entry)
 {
 	struct cluster_msg *msg = (struct cluster_msg *)entry->buf;
 	int bmpno = le32_to_cpu(msg->bitmap);
-	unsigned long long suspend_hi = le64_to_cpu(msg->high);
-	unsigned long long suspend_lo = le64_to_cpu(msg->low);
+	sector_t suspend_hi = le64_to_cpu(msg->high);
+	sector_t suspend_lo = le64_to_cpu(msg->low);
 
 	struct suspend_range_list *suspend = kzalloc(
 			sizeof(struct suspend_range_list), GFP_KERNEL);
