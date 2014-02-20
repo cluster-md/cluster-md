@@ -732,6 +732,8 @@ extern int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
 extern int md_lock_super(struct mddev *mddev, int mode);
 extern void md_unlock_super(struct mddev *mddev);
 extern int md_send_metadata_update(struct mddev *mddev, int async);
+extern int md_send_suspend(struct mddev *mddev, sector_t sus_start, 
+		sector_t sus_end);
 extern void md_reload_superblock(struct mddev *mddev);
 /* FIXME? are these internal functions */
 extern dlm_lockspace_t *md_get_lockspace(void);

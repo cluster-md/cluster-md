@@ -2352,7 +2352,6 @@ out:
 int handle_suspend_range(struct mddev *mddev, struct msg_entry *entry)
 {
 	struct cluster_msg *msg = (struct cluster_msg *)entry->buf;
-	int bmpno = le32_to_cpu(msg->bitmap);
 	sector_t suspend_hi = le64_to_cpu(msg->high);
 	sector_t suspend_lo = le64_to_cpu(msg->low);
 
@@ -2363,7 +2362,6 @@ int handle_suspend_range(struct mddev *mddev, struct msg_entry *entry)
 		return -ENOMEM;
 	}
 
-	suspend->bitmap = bmpno;
 	suspend->high = suspend_hi;
 	suspend->low = suspend_lo;
 	list_add(&suspend->list, &mddev->suspend_range);

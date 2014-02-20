@@ -5323,7 +5323,7 @@ int md_send_resync_finished(struct mddev *mddev, int bmpno)
 	return 0;
 }
 
-int md_send_suspend(struct mddev *mddev, int bmpno, sector_t sus_start, sector_t sus_end)
+int md_send_suspend(struct mddev *mddev, sector_t sus_start, sector_t sus_end)
 {
 	struct dlm_md_msg *msg;
 	struct cluster_msg *suspend;
@@ -5339,7 +5339,6 @@ int md_send_suspend(struct mddev *mddev, int bmpno, sector_t sus_start, sector_t
 
 	suspend = (struct cluster_msg*)msg->buf;
 	suspend->type = cpu_to_le32(SUSPEND_RANGE);
-	suspend->bitmap = cpu_to_le32(bmpno);
 	suspend->low = cpu_to_le64(sus_start);
 	suspend->high = cpu_to_le64(sus_end);
 	msg->len = sizeof(struct cluster_msg);
