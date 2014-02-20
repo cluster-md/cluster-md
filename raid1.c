@@ -2553,8 +2553,6 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
 	int good_sectors = RESYNC_SECTORS;
 	int min_bad = 0; /* number of sectors that are bad in all devices */
 	sector_t sus_start, sus_end;
-	struct dlm_md_msg *msg;
-	struct cluster_msg *suspend;
 
 	sus_start = sector_nr;
 	if (!conf->r1buf_pool)

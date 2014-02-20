@@ -5354,6 +5354,7 @@ int md_send_suspend(struct mddev *mddev, sector_t sus_start, sector_t sus_end)
 	kfree(msg);
 	return 0;
 }
+EXPORT_SYMBOL(md_send_suspend);
 
 static int do_md_run(struct mddev *mddev)
 {
@@ -8941,6 +8942,7 @@ int dlm_lock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 	wait_event(res->waiter, res->finished == 1);
 	return res->lksb.sb_status;
 }
+EXPORT_SYMBOL(dlm_lock_sync);
 
 int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 {
@@ -8953,6 +8955,7 @@ int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 	wait_event(res->waiter, res->finished == 1);
 	return res->lksb.sb_status;
 }
+EXPORT_SYMBOL(dlm_unlock_sync);
 
 dlm_lockspace_t *md_get_lockspace(void)
 {
