@@ -2855,31 +2855,7 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
 	 * waiting for response.
 	 * then continue resync
 	 */
-	msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
-	if (!msg) {
-		return 0;
-	}
-	msg->buf = kzalloc(sizeof(struct cluster_msg), GFP_KERNEL);
-	if (!msg->buf) {
-		kfree(msg);
-		return 0;
-	}
-
-	suspend = (struct cluster_msg *)msg->buf;
-	suspend->type = cpu_to_le32(SUSPEND_RANGE);
-	suspend->low = cpu_to_le64(sus_start);
-	suspend->high = cpu_to_le64(sus_end);
-	msg->len = sizeof(struct cluster_msg);
-	INIT_LIST_HEAD(&msg->list);
-	init_waitqueue_head(&msg->waiter);
-	msg->sent = 0;
-	spin_lock(&mddev->send_lock);
-	list_add_tail(&msg->list, &mddev->send_list);
-	spin_unlock(&mddev->send_lock);
-	md_wakeup_thread(mddev->send_thread);
-	wait_event(msg->waiter, msg->sent != 0);
-	kfree(msg->buf);
-	kfree(msg);
+	md_send_suspend(mddev,sus_start,sus_end);
 
 	/* For a user-requested sync, we read all readable devices and do a
 	 * compare
