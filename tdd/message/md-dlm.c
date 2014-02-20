@@ -136,10 +136,10 @@ static void raid1_recvd(struct md_thread *thread)
 			printk(KERN_ALERT "raid1_recvd:receive message type: metadata update\n");
 			break;
 		case 1:
-			printk(KERN_ALERT "raid1_recvd:receive message type: suspend range\n");
+			printk(KERN_ALERT "raid1_recvd:receive message type: resync finish\n");
 			break;
 		case 2:
-			printk(KERN_ALERT "raid1_recvd:receive message type: resync finish\n");
+			printk(KERN_ALERT "raid1_recvd:receive message type: suspend range\n");
 			break;
 		default:
 			printk(KERN_ALERT "raid1_recvd:should not show this message!!!\n");
@@ -378,7 +378,7 @@ int md_send_metadata_update(int async)
 	return 0;
 }
 
-int md_send_suspend(int bmpno, unsigned long long sus_start, unsigned long long sus_end)
+int md_send_suspend(int bmpno, sector_t sus_start, sector_t sus_end)
 {
 	struct dlm_md_msg *msg;
 	struct cluster_msg *suspend;
@@ -505,7 +505,7 @@ static void __exit md_exit(void)
 	dlm_md_message = NULL;
 	dlm_md_token = NULL;
 	dlm_md_ack = NULL;
-	dlm_release_lockspace(dlm_md_lockspace, 3);
+	dlm_release_lockspace(dlm_md_lockspace, 0);
 }
 
 module_init(md_init);
