@@ -5323,7 +5323,7 @@ int md_send_resync_finished(struct mddev *mddev, int bmpno)
 	return 0;
 }
 
-int md_send_suspend(struct mddev *mddev, int bmpno, unsigned long long sus_start, unsigned long long sus_end)
+int md_send_suspend(struct mddev *mddev, sector_t sus_start, sector_t sus_end)
 {
 	struct dlm_md_msg *msg;
 	struct cluster_msg *suspend;
@@ -5339,7 +5339,6 @@ int md_send_suspend(struct mddev *mddev, int bmpno, unsigned long long sus_start
 
 	suspend = (struct cluster_msg*)msg->buf;
 	suspend->type = cpu_to_le32(SUSPEND_RANGE);
-	suspend->bitmap = cpu_to_le32(bmpno);
 	suspend->low = cpu_to_le64(sus_start);
 	suspend->high = cpu_to_le64(sus_end);
 	msg->len = sizeof(struct cluster_msg);
@@ -5355,6 +5354,7 @@ int md_send_suspend(struct mddev *mddev, int bmpno, unsigned long long sus_start
 	kfree(msg);
 	return 0;
 }
+EXPORT_SYMBOL(md_send_suspend);
 
 static int do_md_run(struct mddev *mddev)
 {
@@ -7898,33 +7898,6 @@ void md_do_sync(struct md_thread *thread)
 			continue;
 		}
 		md_send_resync_finished(mddev, mddev->avail_bitmap[i]);
-		/*
-		msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
-		if (!msg) {
-			printk(KERN_WARNING "allocate memory for message failed!\n");
-			break;
-		}
-		INIT_LIST_HEAD(&msg->list);
-		init_waitqueue_head(&msg->waiter);
-		msg->sent = 0;
-		resync = kzalloc(sizeof(struct cluster_msg), GFP_KERNEL);
-		if (!resync) {
-			kfree(msg);
-			printk(KERN_WARNING "allocate memory for message failed!\n");
-			break;
-		}
-		msg->buf = resync;
-		resync->type = cpu_to_le32(RESYNC_FINISHED);
-		resync->bitmap = cpu_to_le32(mddev->avail_bitmap[i]);
-		msg->len = sizeof(struct cluster_msg);
-		spin_lock(&mddev->send_lock);
-		list_add_tail(&msg->list, &mddev->send_list);
-		spin_unlock(&mddev->send_lock);
-		md_wakeup_thread(mddev->send_thread);
-		wait_event(msg->waiter, msg->sent != 0);
-		kfree(msg->buf);
-		kfree(msg);
-		*/
 	}
 	/* may need to send out suspend message
 	 * with 0 - 0 range? 
@@ -8923,7 +8896,7 @@ static int __init md_init(void)
 	}
 	mddev_sb_lock = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
 	if (!mddev_sb_lock) {
-		dlm_release_lockspace(md_lockspace, 3);
+		dlm_release_lockspace(md_lockspace, 0);
 		goto err_mdp;
 	}
 	INIT_LIST_HEAD(&mddev_sb_lock->list);
@@ -8969,6 +8942,7 @@ int dlm_lock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 	wait_event(res->waiter, res->finished == 1);
 	return res->lksb.sb_status;
 }
+EXPORT_SYMBOL(dlm_lock_sync);
 
 int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 {
@@ -8981,6 +8955,7 @@ int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 	wait_event(res->waiter, res->finished == 1);
 	return res->lksb.sb_status;
 }
+EXPORT_SYMBOL(dlm_unlock_sync);
 
 dlm_lockspace_t *md_get_lockspace(void)
 {
@@ -9134,7 +9109,7 @@ static __exit void md_exit(void)
 	}
 	destroy_workqueue(md_misc_wq);
 	destroy_workqueue(md_wq);
-	dlm_release_lockspace(md_lockspace, 3);
+	dlm_release_lockspace(md_lockspace, 0);
 	kfree(mddev_sb_lock);
 }
 

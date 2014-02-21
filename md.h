@@ -247,15 +247,15 @@ struct msg_entry {
 struct cluster_msg {
 	int type;
 	int bitmap;
-	unsigned long long low;
-	unsigned long long high;
+	sector_t low;
+	sector_t high;
 };
 
 struct suspend_range_list {
 	struct list_head list;
 	int bitmap;
-	unsigned long long low;
-	unsigned long long high;
+	sector_t low;
+	sector_t high;
 };
 
 typedef int (*msg_handle)(struct mddev *mddev, struct msg_entry *entry);
@@ -732,6 +732,8 @@ extern int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res);
 extern int md_lock_super(struct mddev *mddev, int mode);
 extern void md_unlock_super(struct mddev *mddev);
 extern int md_send_metadata_update(struct mddev *mddev, int async);
+extern int md_send_suspend(struct mddev *mddev, sector_t sus_start, 
+		sector_t sus_end);
 extern void md_reload_superblock(struct mddev *mddev);
 /* FIXME? are these internal functions */
 extern dlm_lockspace_t *md_get_lockspace(void);

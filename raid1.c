@@ -2352,9 +2352,8 @@ out:
 int handle_suspend_range(struct mddev *mddev, struct msg_entry *entry)
 {
 	struct cluster_msg *msg = (struct cluster_msg *)entry->buf;
-	int bmpno = le32_to_cpu(msg->bitmap);
-	unsigned long long suspend_hi = le64_to_cpu(msg->high);
-	unsigned long long suspend_lo = le64_to_cpu(msg->low);
+	sector_t suspend_hi = le64_to_cpu(msg->high);
+	sector_t suspend_lo = le64_to_cpu(msg->low);
 
 	struct suspend_range_list *suspend = kzalloc(
 			sizeof(struct suspend_range_list), GFP_KERNEL);
@@ -2363,7 +2362,6 @@ int handle_suspend_range(struct mddev *mddev, struct msg_entry *entry)
 		return -ENOMEM;
 	}
 
-	suspend->bitmap = bmpno;
 	suspend->high = suspend_hi;
 	suspend->low = suspend_lo;
 	list_add(&suspend->list, &mddev->suspend_range);
@@ -2555,8 +2553,6 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
 	int good_sectors = RESYNC_SECTORS;
 	int min_bad = 0; /* number of sectors that are bad in all devices */
 	sector_t sus_start, sus_end;
-	struct dlm_md_msg *msg;
-	struct cluster_msg *suspend;
 
 	sus_start = sector_nr;
 	if (!conf->r1buf_pool)
@@ -2855,31 +2851,7 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
 	 * waiting for response.
 	 * then continue resync
 	 */
-	msg = kzalloc(sizeof(struct dlm_md_msg), GFP_KERNEL);
-	if (!msg) {
-		return 0;
-	}
-	msg->buf = kzalloc(sizeof(struct cluster_msg), GFP_KERNEL);
-	if (!msg->buf) {
-		kfree(msg);
-		return 0;
-	}
-
-	suspend = (struct cluster_msg *)msg->buf;
-	suspend->type = cpu_to_le32(SUSPEND_RANGE);
-	suspend->low = cpu_to_le64(sus_start);
-	suspend->high = cpu_to_le64(sus_end);
-	msg->len = sizeof(struct cluster_msg);
-	INIT_LIST_HEAD(&msg->list);
-	init_waitqueue_head(&msg->waiter);
-	msg->sent = 0;
-	spin_lock(&mddev->send_lock);
-	list_add_tail(&msg->list, &mddev->send_list);
-	spin_unlock(&mddev->send_lock);
-	md_wakeup_thread(mddev->send_thread);
-	wait_event(msg->waiter, msg->sent != 0);
-	kfree(msg->buf);
-	kfree(msg);
+	md_send_suspend(mddev,sus_start,sus_end);
 
 	/* For a user-requested sync, we read all readable devices and do a
 	 * compare

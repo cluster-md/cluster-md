@@ -581,7 +581,7 @@ static int bitmap_read_sb(struct bitmap *bitmap)
 	char *reason = NULL;
 	bitmap_super_t *sb;
 	unsigned long chunksize, daemon_sleep, write_behind;
-	int nodes;
+	int nodes = 0;
 	unsigned long sectors_reserved = 0;
 	int err = -EINVAL;
 	struct page *sb_page;
@@ -2028,6 +2028,7 @@ struct dlm_lock_resource *find_bitmap_by_node(struct mddev *mddev, int node)
 	}
 	return NULL;
 }
+EXPORT_SYMBOL(find_bitmap_by_node);
 
 void bitmap_ast(void *arg)
 {
@@ -2119,6 +2120,7 @@ int bitmap_lock_sync(struct dlm_lock_resource *res)
 	wait_event(res->waiter, res->finished == 1);
 	return res->lksb.sb_status;
 }
+EXPORT_SYMBOL(bitmap_lock_sync);
 
 int bitmap_unlock_sync(struct dlm_lock_resource *res)
 {
@@ -2135,6 +2137,7 @@ int bitmap_unlock_sync(struct dlm_lock_resource *res)
 	wait_event(res->waiter, res->finished == 1);
 	return res->lksb.sb_status;
 }
+EXPORT_SYMBOL(bitmap_unlock_sync);
 
 int bitmap_lock_async(struct dlm_lock_resource *res)
 {
@@ -2146,6 +2149,7 @@ int bitmap_lock_async(struct dlm_lock_resource *res)
 			bitmap_ast, res, bitmap_bast);
 	return ret;
 }
+EXPORT_SYMBOL(bitmap_lock_async);
 
 int bitmap_load(struct mddev *mddev)
 {
