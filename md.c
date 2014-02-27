@@ -71,23 +71,6 @@ static void md_print_devices(void);
 static DECLARE_WAIT_QUEUE_HEAD(resync_wait);
 static struct workqueue_struct *md_wq;
 static struct workqueue_struct *md_misc_wq;
-/* These two variables are used to synchronize
- * super block read for cluster-raid. It is 
- * akwuard since it synchronizes all md super accesses,
- * but we need synchronization to 
- * access super block before mddev is 
- * initialized, it means we cannot uniquely identify 
- * the raid and construct dlm resource accordingly.
- */
-static dlm_lockspace_t *md_lockspace;
-/* this lock is never converted
- * before reading, grab CR on it
- * release it after reading.
- * before writint, grab EX on it,
- * release it after writing.
- */
-static struct mutex sb_mutex;
-static struct dlm_lock_resource *mddev_sb_lock;
 
 static int remove_and_add_spares(struct mddev *mddev,
 				 struct md_rdev *this);
@@ -542,6 +525,7 @@ void mddev_init(struct mddev *mddev)
 	init_waitqueue_head(&mddev->recovery_wait);
 	init_waitqueue_head(&mddev->bitmap_wait);
 	mutex_init(&mddev->msg_mutex);
+	mutex_init(mddev->sb_mutex);
 	mutex_init(&mddev->avail_mutex);
 	mutex_init(&mddev->reclaim_mutex);
 	mddev->reshape_position = MaxSector;
@@ -881,7 +865,8 @@ static int read_disk_sb(struct md_rdev * rdev, int size)
 	if (rdev->sb_loaded)
 		return 0;
 
-	mutex_lock(&sb_mutex);
+	/*
+	mutex_lock(sb_mutex);
 	mddev_sb_lock->finished = 0;
 	mddev_sb_lock->mode = DLM_LOCK_CR;
 	mddev_sb_lock->flags = 0;
@@ -893,18 +878,18 @@ static int read_disk_sb(struct md_rdev * rdev, int size)
 	}
 	if (ret) {
 		printk(KERN_WARNING "dlm lock error");
-		mutex_unlock(&sb_mutex);
+		mutex_unlock(sb_mutex);
 		goto fail;
-	}
+	}*/
 	
 	ret = sync_page_io(rdev, 0, size, rdev->sb_page, READ, true);
 	if (!ret) {
-		dlm_unlock_sync(md_lockspace, mddev_sb_lock);
-		mutex_unlock(&sb_mutex);
+		//dlm_unlock_sync(md_lockspace, mddev_sb_lock);
+		//mutex_unlock(sb_mutex);
 		goto fail;
 	}
-	dlm_unlock_sync(md_lockspace, mddev_sb_lock);
-	mutex_unlock(&sb_mutex);
+	//dlm_unlock_sync(md_lockspace, mddev_sb_lock);
+	//mutex_unlock(sb_mutex);
 	rdev->sb_loaded = 1;
 	return 0;
 
@@ -6918,9 +6903,6 @@ static int md_open(struct block_device *bdev, fmode_t mode)
 	mutex_unlock(&mddev->open_mutex);
 
 	check_disk_change(bdev);
-	mddev->dlm_md_lockspace = md_get_lockspace();
-	mddev->sb_mutex = md_get_sb_mutex();
-	mddev->dlm_md_meta = md_get_mddev_sb_lock();
  out:
 	return err;
 }
@@ -8889,22 +8871,6 @@ static int __init md_init(void)
 	register_reboot_notifier(&md_notifier);
 	raid_table_header = register_sysctl_table(raid_root_table);
 
-	ret = dlm_new_lockspace("md-cluster", NULL, DLM_LSFL_FS, 32, NULL, NULL, NULL, 
-			&md_lockspace);
-	if (ret) {
-		goto err_mdp;
-	}
-	mddev_sb_lock = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
-	if (!mddev_sb_lock) {
-		dlm_release_lockspace(md_lockspace, 0);
-		goto err_mdp;
-	}
-	INIT_LIST_HEAD(&mddev_sb_lock->list);
-	init_waitqueue_head(&mddev_sb_lock->waiter);
-	mddev_sb_lock->name = "cmd-super";
-	mddev_sb_lock->namelen = strlen("cmd-super");
-	mutex_init(&sb_mutex);
-
 	md_geninit();
 	return 0;
 
@@ -8956,24 +8922,6 @@ int dlm_unlock_sync(dlm_lockspace_t *ls, struct dlm_lock_resource *res)
 	return res->lksb.sb_status;
 }
 EXPORT_SYMBOL(dlm_unlock_sync);
-
-dlm_lockspace_t *md_get_lockspace(void)
-{
-	return md_lockspace;
-}
-
-struct dlm_lock_resource *md_get_mddev_sb_lock(void)
-{
-	return mddev_sb_lock;
-}
-
-struct mutex *md_get_sb_mutex(void)
-{
-	return &sb_mutex;
-}
-
-EXPORT_SYMBOL(md_get_lockspace);
-EXPORT_SYMBOL(md_get_mddev_sb_lock);
 
 int md_lock_super(struct mddev *mddev, int mode)
 {
@@ -9109,8 +9057,6 @@ static __exit void md_exit(void)
 	}
 	destroy_workqueue(md_misc_wq);
 	destroy_workqueue(md_wq);
-	dlm_release_lockspace(md_lockspace, 0);
-	kfree(mddev_sb_lock);
 }
 
 subsys_initcall(md_init);

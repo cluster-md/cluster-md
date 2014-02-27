@@ -736,9 +736,6 @@ extern int md_send_suspend(struct mddev *mddev, sector_t sus_start,
 		sector_t sus_end);
 extern void md_reload_superblock(struct mddev *mddev);
 /* FIXME? are these internal functions */
-extern dlm_lockspace_t *md_get_lockspace(void);
-extern struct mutex *md_get_sb_mutex(void);
-struct dlm_lock_resource *md_get_mddev_sb_lock(void);
 void deinit_lock_resource(struct dlm_lock_resource *res);
 struct dlm_lock_resource *init_lock_resource(struct mddev *mddev, char *name);
 
