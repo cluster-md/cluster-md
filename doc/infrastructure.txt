@@ -1,5 +1,7 @@
 # Basic ideas
 
+?? means I am not sure the code here.
+
 # struct of bitmap
 
 N is the maxium nodes number we support.
@@ -11,13 +13,13 @@ we have N events_counter_s.
 	4K md_super_block
 	4K BBL
 	4K bitmap_super_s
-	event_counter_s
+	event_counter_s(32Bytes)
 	...
-	event_counter_s
+	event_counter_s(32Bytes)
 	...
-	event_counter_s
+	event_counter_s(32Bytes)
 	...
-	event_counter_s
+	event_counter_s(32Bytes)
 	...
 
 # struct of event_counter_s
@@ -88,5 +90,26 @@ the correspoding memory part of which is struct events_info.
        elif bitmap is occupied by other nodes
            try to get CR of the per-bitmap-lock(async|queue|persistent)
 	
+
+4.bitmap_update_sb(bitmap.c)
+  1. lock EX of bitmap->mddev ??
+  2. write_page(bitmap, bitmap->storage.sb_page
+  3. unlock EX ob bitmap->mddev ??
+  4. write the bitmap the node is using(has EX)
+     events_cleared = min(mddev.events, bitmap.events_cleared)
+  5. write the bitmap the node is accessing(has CR) ??
+
+5.bitmap_read_sb(bitmap.c)
+  1. lock EX of bitmap->mddev ??
+  2. read_page(bitmap, bitmap->storage.sb_page
+  3. unlock EX ob bitmap->mddev ??
+  4. read max nodes
+  5. ??read event_info from disk
+
+
+6.
+
+  
+
 
 # error handling
