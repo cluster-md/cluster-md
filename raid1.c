@@ -3245,7 +3245,12 @@ static int run(struct mddev *mddev)
 	ret =  md_integrity_register(mddev);
 	if (ret)
 		goto recv_failed;
-	ret = -ENOMEM;
+	/*new lockspace here*/
+	ret = dlm_new_lockspace(mddev->uuid, NULL, DLM_LSFL_FS, 32, 
+			NULL, NULL, NULL, &mddev->dlm_md_lockspace);
+	if (ret) {
+		goto recv_failed;
+	}
 	mddev->recv_thread = md_register_thread(raid1_recvd, mddev, "raid1_recvd");
 	if (!mddev->recv_thread) {
 		printk(KERN_ERR "cannot allocate memory for recv_thread!\n");
@@ -3272,6 +3277,9 @@ static int run(struct mddev *mddev)
 	mddev->dlm_md_ack = init_lock_resource(mddev, "ack");
 	if (!mddev->dlm_md_ack)
 		goto ack_failed;
+	mddev->dlm_md_meta = init_lock_resource(mddev,"cmd-super");
+	if (!mddev->dlm_md_meta)
+		goto meta_failed;
 	/* get sync CR lock on ACK. */
 	res = mddev->dlm_md_ack;
 	res->finished = 0;
@@ -3284,9 +3292,12 @@ static int run(struct mddev *mddev)
 		printk(KERN_ERR "failed to get a sync CR lock on ACK!\n");
 	}
 	return ret;
+meta_failed:
+	deinit_lock_resource(mddev->dlm_md_meta);
+	mddev->dlm_md_meta = NULL;
 ack_failed:
-	deinit_lock_resource(mddev->dlm_md_token);
-	mddev->dlm_md_token = NULL;
+	deinit_lock_resource(mddev->dlm_md_ack);
+	mddev->dlm_md_ack = NULL;
 token_failed:
 	deinit_lock_resource(mddev->dlm_md_message);
 	mddev->dlm_md_message = NULL;
@@ -3323,10 +3334,12 @@ static int stop(struct mddev *mddev)
 	deinit_lock_resource(mddev->dlm_md_message);
 	deinit_lock_resource(mddev->dlm_md_token);
 	deinit_lock_resource(mddev->dlm_md_ack);
+	deinit_lock_resource(mddev->dlm_md_meta);
 	mddev->dlm_md_resync = NULL;
 	mddev->dlm_md_message = NULL;
 	mddev->dlm_md_token = NULL;
 	mddev->dlm_md_ack = NULL;
+	dlm_release_lockspace(mddev->dlm_md_lockspace, 0);
 	while (!list_empty(&mddev->dlm_md_bitmap)) {
 		struct dlm_lock_resource *pos;
 		pos = list_entry(mddev->dlm_md_bitmap.next, struct dlm_lock_resource,
