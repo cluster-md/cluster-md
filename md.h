@@ -499,6 +499,10 @@ struct mddev {
 	struct dlm_lock_resource *dlm_md_meta; /* lock for metadata. */
 	struct dlm_lock_resource *dlm_md_resync; /* lock for resync/recovery. */
 
+	/*for adding new spare disk*/
+	struct dlm_lock_resource *no_new_devs; 
+	struct dlm_lock_resource *res_uuid; 
+
 	/* mutex to protect message resources */
 	struct mutex msg_mutex;
 

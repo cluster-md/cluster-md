@@ -3280,6 +3280,12 @@ static int run(struct mddev *mddev)
 	mddev->dlm_md_meta = init_lock_resource(mddev,"cmd-super");
 	if (!mddev->dlm_md_meta)
 		goto meta_failed;
+	mddev->no_new_devs = init_lock_resource(mddev, "no-new-devs");
+	if (!mddev->no_new_devs)
+		goto no_new_devs_failed;
+	mddev->res_uuid = init_lock_resource(mddev, "res_uuid");
+	if (!mddev->res_uuid) 
+		goto res_uuid_failed;
 	/* get sync CR lock on ACK. */
 	res = mddev->dlm_md_ack;
 	res->finished = 0;
@@ -3291,7 +3297,22 @@ static int run(struct mddev *mddev)
 	if (dlm_lock_sync(mddev->dlm_md_lockspace, res)) {
 		printk(KERN_ERR "failed to get a sync CR lock on ACK!\n");
 	}
+
+	/*get CR lock on no_new_devs*/
+	res = mddev->no_new_devs;
+	ret = dlm_lock(mddev->dlm_md_lockspace, DLM_LOCK_CR, 
+			&res->lksb,DLM_LKF_NOQUEUE,res->name, 
+			res->namelen,0,NULL,res,NULL);
+	if (ret) {
+		printk(KERN_ERR "failed to get a sync CR lock on no_new_devs!\n");
+	}
 	return ret;
+res_uuid_failed:
+	deinit_lock_resource(mddev->res_uuid);
+	mddev->res_uuid = NULL;
+no_new_devs:
+	deinit_lock_resource(mddev->no_new_devs);
+	mddev->no_new_devs= NULL;
 meta_failed:
 	deinit_lock_resource(mddev->dlm_md_meta);
 	mddev->dlm_md_meta = NULL;
@@ -3335,10 +3356,14 @@ static int stop(struct mddev *mddev)
 	deinit_lock_resource(mddev->dlm_md_token);
 	deinit_lock_resource(mddev->dlm_md_ack);
 	deinit_lock_resource(mddev->dlm_md_meta);
+	deinit_lock_resource(mddev->no_new_devs);
+	deinit_lock_resource(mddev->res_uuid);
 	mddev->dlm_md_resync = NULL;
 	mddev->dlm_md_message = NULL;
 	mddev->dlm_md_token = NULL;
 	mddev->dlm_md_ack = NULL;
+	mddev->no_new_devs = NULL;
+	mddev->res_uuid = NULL;
 	dlm_release_lockspace(mddev->dlm_md_lockspace, 0);
 	while (!list_empty(&mddev->dlm_md_bitmap)) {
 		struct dlm_lock_resource *pos;
