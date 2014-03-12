@@ -5949,6 +5949,14 @@ static int add_new_disk(struct mddev * mddev, mdu_disk_info_t *info)
 			       mdname(mddev));
 			return -EINVAL;
 		}
+		/*Drop CR on no_new_devs
+		  Get EX on res_uuid, if succeed,write UUID
+		     and downconvert EX to PW. Get EX on no_new_devs,bast is called 
+		     when other nodes gets a new device.send message and downconvert 
+		     EX to CR on no_new_devs and release PW on res_uuid
+		  If fail,Get NULL on res_uuid, and read UUID. If no match,set it faulty.
+		  Get CR on no_new_devs and release NULL on res_uuid.
+		*/
 		if (mddev->persistent)
 			rdev = md_import_device(dev, mddev->major_version,
 						mddev->minor_version);
