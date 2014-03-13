@@ -5943,20 +5943,14 @@ static int add_new_disk(struct mddev * mddev, mdu_disk_info_t *info)
 	 */
 	if (mddev->pers) {
 		int err;
+		dlm_md_resource *res;
+
 		if (!mddev->pers->hot_add_disk) {
 			printk(KERN_WARNING 
 				"%s: personality does not support diskops!\n",
 			       mdname(mddev));
 			return -EINVAL;
 		}
-		/*Drop CR on no_new_devs
-		  Get EX on res_uuid, if succeed,write UUID
-		     and downconvert EX to PW. Get EX on no_new_devs,bast is called 
-		     when other nodes gets a new device.send message and downconvert 
-		     EX to CR on no_new_devs and release PW on res_uuid
-		  If fail,Get NULL on res_uuid, and read UUID. If no match,set it faulty.
-		  Get CR on no_new_devs and release NULL on res_uuid.
-		*/
 		if (mddev->persistent)
 			rdev = md_import_device(dev, mddev->major_version,
 						mddev->minor_version);
@@ -5967,6 +5961,72 @@ static int add_new_disk(struct mddev * mddev, mdu_disk_info_t *info)
 				"md: md_import_device returned %ld\n",
 				PTR_ERR(rdev));
 			return PTR_ERR(rdev);
+		}
+		/*Drop CR on no_new_devs
+		  Get EX on res_uuid, if succeed,write UUID
+		     and downconvert EX to PW. Get EX on no_new_devs,bast is called 
+		     when other nodes gets a new device.send message and downconvert 
+		     EX to CR on no_new_devs and release PW on res_uuid
+		  If fail,Get NULL on res_uuid, and read UUID. If no match,set it faulty.
+		  Get CR on no_new_devs and release NULL on res_uuid.
+		*/
+		res = mddev->no_new_devs;
+		err = dlm_unlock(mddev->dlm_md_lockspace, res->lksb.sb_lkid, 
+				0, &res->lksb, res);
+		if (err)
+			printk(KERN_ERR "failed to release CR lock on no_new_devs!\n");
+		res = mddev->res_uuid;
+		//failed
+		if (dlm_lock(mddev->dlm_md_lockspace, DLM_LOCK_EX, &res->lksb,
+					DLM_LKF_NOQUEUE, res->name, res->namelen,
+					0, NULL, res, NULL)) {
+			//FIXME here just for default metadata 
+			struct mdp_superblock_1 *sb = page_address(rdev->sb_page);
+			res->mode = DLM_LOCK_NL;
+			res->flags = DLM_LKF_VALBLK;
+			res->bast = NULL;
+			res->parent_id = 0;
+			err = dlm_lock_sync(mddev->dlm_md_lockspace, res);
+			if (err)
+				printk(KERN_ERR "failed to get NULL lock on res_uuid!\n");
+			//FIXME no process for failure
+			if (memcmp(sb->set_uuid, res->lksb.sb_lvbptr, 16)) {
+				dlm_unlock(res->dlm_md_lockspace, res->lksb.sb_lkid,
+					       	0, &res->lksb, res);
+				res = mddev->no_new_devs;
+				res->mode = DLM_LOCK_CR;
+				res->flags = 0;
+				res->bast = NULL;
+				res->parent_id = 0;
+				dlm_lock_sync(mddev->dlm_md_lockspace, res);
+				return;
+			}
+		} else {
+			struct mdp_superblock_1 *sb = page_address(rdev->sb_page);
+			memcpy(res->lksb.sb_lvbptr, sb->set_uuid, 16);
+			res->mode = DLM_LOCK_PW;
+			res->flags = DLM_LKF_VALBLK|DLM_LKF_CONVERT;
+			res->bast = NULL;
+			res->parent_id = 0;
+			err = dlm_lock_sync(mddev->dlm_md_lockspace, res);
+			if (err)
+				printk(KERN_ERR "failed to convert EX to PW on res_uuid!\n");
+			res = mddev->no_new_devs;
+			res->mode = DLM_LOCK_EX;
+			res->flags = 0;
+			res->bast = NULL;
+			res->parent_id = 0;
+			err = dlm_lock_sync(mddev->dlm_md_lockspace, res);
+			if (err)
+				printk(KERN_ERR "failed to get EX on no-new-devs!\n");
+			res->mode = DLM_LOCK_CR;
+			res->flags = DLM_LKF_CONVERT;
+			err = dlm_lock_sync(mddev->dlm_md_lockspace, res);
+			if (err)
+				printk(KERN_ERR "failed to convert EX to PW on no-new-devs!\n");
+			res = mddev->res_uuid;
+			dlm_unlock(mddev->dlm_md_lockspace, res->lksb.sb_lkid,
+				       	0, &res->lksb, res);
 		}
 		/* set saved_raid_disk if appropriate */
 		if (!mddev->persistent) {
@@ -6024,6 +6084,9 @@ static int add_new_disk(struct mddev * mddev, mdu_disk_info_t *info)
 		if (!err)
 			md_new_event(mddev);
 		md_wakeup_thread(mddev->thread);
+		//if we send message in md_update_sb() later, then don't need to 
+		//send the metadata_update message here
+		md_send_metadata_update(mddev, 0);
 		return err;
 	}
 

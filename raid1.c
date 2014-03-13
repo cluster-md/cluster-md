@@ -3288,7 +3288,6 @@ static int run(struct mddev *mddev)
 		goto res_uuid_failed;
 	/* get sync CR lock on ACK. */
 	res = mddev->dlm_md_ack;
-	res->finished = 0;
 	res->mode = DLM_LOCK_CR;
 	res->flags = DLM_LKF_NOQUEUE;
 	res->parent_lkid = 0;
