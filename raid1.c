@@ -3309,7 +3309,7 @@ static int run(struct mddev *mddev)
 res_uuid_failed:
 	deinit_lock_resource(mddev->res_uuid);
 	mddev->res_uuid = NULL;
-no_new_devs:
+no_new_devs_failed:
 	deinit_lock_resource(mddev->no_new_devs);
 	mddev->no_new_devs= NULL;
 meta_failed:

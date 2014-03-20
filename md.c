@@ -5943,7 +5943,7 @@ static int add_new_disk(struct mddev * mddev, mdu_disk_info_t *info)
 	 */
 	if (mddev->pers) {
 		int err;
-		dlm_md_resource *res;
+		struct dlm_lock_resource *res;
 
 		if (!mddev->pers->hot_add_disk) {
 			printk(KERN_WARNING 
@@ -5985,21 +5985,21 @@ static int add_new_disk(struct mddev * mddev, mdu_disk_info_t *info)
 			res->mode = DLM_LOCK_NL;
 			res->flags = DLM_LKF_VALBLK;
 			res->bast = NULL;
-			res->parent_id = 0;
+			res->parent_lkid = 0;
 			err = dlm_lock_sync(mddev->dlm_md_lockspace, res);
 			if (err)
 				printk(KERN_ERR "failed to get NULL lock on res_uuid!\n");
 			//FIXME no process for failure
 			if (memcmp(sb->set_uuid, res->lksb.sb_lvbptr, 16)) {
-				dlm_unlock(res->dlm_md_lockspace, res->lksb.sb_lkid,
+				dlm_unlock(mddev->dlm_md_lockspace, res->lksb.sb_lkid,
 					       	0, &res->lksb, res);
 				res = mddev->no_new_devs;
 				res->mode = DLM_LOCK_CR;
 				res->flags = 0;
 				res->bast = NULL;
-				res->parent_id = 0;
+				res->parent_lkid = 0;
 				dlm_lock_sync(mddev->dlm_md_lockspace, res);
-				return;
+				return err;
 			}
 		} else {
 			struct mdp_superblock_1 *sb = page_address(rdev->sb_page);
@@ -6007,7 +6007,7 @@ static int add_new_disk(struct mddev * mddev, mdu_disk_info_t *info)
 			res->mode = DLM_LOCK_PW;
 			res->flags = DLM_LKF_VALBLK|DLM_LKF_CONVERT;
 			res->bast = NULL;
-			res->parent_id = 0;
+			res->parent_lkid = 0;
 			err = dlm_lock_sync(mddev->dlm_md_lockspace, res);
 			if (err)
 				printk(KERN_ERR "failed to convert EX to PW on res_uuid!\n");
@@ -6015,7 +6015,7 @@ static int add_new_disk(struct mddev * mddev, mdu_disk_info_t *info)
 			res->mode = DLM_LOCK_EX;
 			res->flags = 0;
 			res->bast = NULL;
-			res->parent_id = 0;
+			res->parent_lkid = 0;
 			err = dlm_lock_sync(mddev->dlm_md_lockspace, res);
 			if (err)
 				printk(KERN_ERR "failed to get EX on no-new-devs!\n");
