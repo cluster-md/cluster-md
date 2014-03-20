@@ -517,7 +517,7 @@ struct mddev {
 	struct mutex reclaim_mutex;
 	int *avail_bitmap;
 	int *reclaim_bitmap;
-	struct mutex *sb_mutex;
+	struct mutex sb_mutex;
 
 	/*suspend range list*/
 	struct list_head  suspend_range;

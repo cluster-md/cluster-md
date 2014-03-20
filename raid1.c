@@ -3246,9 +3246,11 @@ static int run(struct mddev *mddev)
 	if (ret)
 		goto recv_failed;
 	/*new lockspace here*/
+        printk(KERN_ERR "New lockspace: uuid = %s\n",mddev->uuid);
 	ret = dlm_new_lockspace(mddev->uuid, NULL, DLM_LSFL_FS, 32, 
 			NULL, NULL, NULL, &mddev->dlm_md_lockspace);
 	if (ret) {
+        	printk(KERN_ERR "New lockspace failed\n");
 		goto recv_failed;
 	}
 	mddev->recv_thread = md_register_thread(raid1_recvd, mddev, "raid1_recvd");

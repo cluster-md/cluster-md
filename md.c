@@ -525,7 +525,7 @@ void mddev_init(struct mddev *mddev)
 	init_waitqueue_head(&mddev->recovery_wait);
 	init_waitqueue_head(&mddev->bitmap_wait);
 	mutex_init(&mddev->msg_mutex);
-	mutex_init(mddev->sb_mutex);
+	mutex_init(&mddev->sb_mutex);
 	mutex_init(&mddev->avail_mutex);
 	mutex_init(&mddev->reclaim_mutex);
 	mddev->reshape_position = MaxSector;
@@ -8996,7 +8996,7 @@ EXPORT_SYMBOL(dlm_unlock_sync);
 
 int md_lock_super(struct mddev *mddev, int mode)
 {
-	struct mutex *sb_mutex = mddev->sb_mutex;
+	struct mutex *sb_mutex = &mddev->sb_mutex;
 	struct dlm_lock_resource *mddev_sb_lock = mddev->dlm_md_meta;
 	dlm_lockspace_t *md_lockspace = mddev->dlm_md_lockspace;
 	int ret = -EAGAIN;
@@ -9020,7 +9020,7 @@ int md_lock_super(struct mddev *mddev, int mode)
 
 void md_unlock_super(struct mddev *mddev)
 {
-	struct mutex *sb_mutex = mddev->sb_mutex;
+	struct mutex *sb_mutex = &mddev->sb_mutex;
 	struct dlm_lock_resource *mddev_sb_lock = mddev->dlm_md_meta;
 	dlm_lockspace_t *md_lockspace = mddev->dlm_md_lockspace;
 
