@@ -3244,8 +3244,10 @@ static int run(struct mddev *mddev)
 	}
 
 	ret =  md_integrity_register(mddev);
-	if (ret)
+	if (ret) {
+		stop(mddev);
 		goto recv_failed;
+	}
 	/*new lockspace here*/
 	for (i = 0;i < 16;i++) {
 		sprintf(lockspace_nm + i * 2, "%02x", mddev->uuid[i]);
@@ -3332,7 +3334,6 @@ message_failed:
 	deinit_lock_resource(mddev->dlm_md_resync);
 	mddev->dlm_md_resync = NULL;
 recv_failed:
-	stop(mddev);
 	return ret;
 }
 
