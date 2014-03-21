@@ -5052,7 +5052,9 @@ int md_run(struct mddev *mddev)
 		analyze_sbs(mddev);
 	}
 
-	if (mddev->level != LEVEL_NONE)
+	if (mddev->level == 1)
+		request_module("cluster-raid1");
+	else if (mddev->level != LEVEL_NONE)
 		request_module("md-level-%d", mddev->level);
 	else if (mddev->clevel[0])
 		request_module("md-%s", mddev->clevel);

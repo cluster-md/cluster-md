@@ -3165,6 +3165,7 @@ static int run(struct mddev *mddev)
 	int ret;
 	bool discard_supported = false;
 	struct dlm_lock_resource *res = NULL;
+	char lockspace_nm[33];
 
 	if (mddev->level != 1) {
 		printk(KERN_ERR "md/raid1:%s: raid level not set to mirroring (%d)\n",
@@ -3246,8 +3247,12 @@ static int run(struct mddev *mddev)
 	if (ret)
 		goto recv_failed;
 	/*new lockspace here*/
-        printk(KERN_ERR "New lockspace: uuid = %s\n",mddev->uuid);
-	ret = dlm_new_lockspace(mddev->uuid, NULL, DLM_LSFL_FS, 32, 
+	for (i = 0;i < 16;i++) {
+		sprintf(lockspace_nm + i * 2, "%02x", mddev->uuid[i]);
+	}
+	lockspace_nm[32] = '\0';
+        printk(KERN_ERR "New lockspace: uuid = %s\n",lockspace_nm);
+	ret = dlm_new_lockspace(lockspace_nm, NULL, DLM_LSFL_FS, 32, 
 			NULL, NULL, NULL, &mddev->dlm_md_lockspace);
 	if (ret) {
         	printk(KERN_ERR "New lockspace failed\n");
@@ -3590,8 +3595,5 @@ module_init(raid_init);
 module_exit(raid_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("RAID1 (mirroring) personality for MD");
-MODULE_ALIAS("md-personality-3"); /* RAID1 */
-MODULE_ALIAS("md-raid1");
-MODULE_ALIAS("md-level-1");
 
 module_param(max_queued_requests, int, S_IRUGO|S_IWUSR);
