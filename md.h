@@ -499,6 +499,10 @@ struct mddev {
 	struct dlm_lock_resource *dlm_md_meta; /* lock for metadata. */
 	struct dlm_lock_resource *dlm_md_resync; /* lock for resync/recovery. */
 
+	/*for adding new spare disk*/
+	struct dlm_lock_resource *no_new_devs; 
+	struct dlm_lock_resource *res_uuid; 
+
 	/* mutex to protect message resources */
 	struct mutex msg_mutex;
 
@@ -513,7 +517,7 @@ struct mddev {
 	struct mutex reclaim_mutex;
 	int *avail_bitmap;
 	int *reclaim_bitmap;
-	struct mutex *sb_mutex;
+	struct mutex sb_mutex;
 
 	/*suspend range list*/
 	struct list_head  suspend_range;

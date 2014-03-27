@@ -3165,6 +3165,7 @@ static int run(struct mddev *mddev)
 	int ret;
 	bool discard_supported = false;
 	struct dlm_lock_resource *res = NULL;
+	char lockspace_nm[33];
 
 	if (mddev->level != 1) {
 		printk(KERN_ERR "md/raid1:%s: raid level not set to mirroring (%d)\n",
@@ -3243,12 +3244,20 @@ static int run(struct mddev *mddev)
 	}
 
 	ret =  md_integrity_register(mddev);
-	if (ret)
+	if (ret) {
+		stop(mddev);
 		goto recv_failed;
+	}
 	/*new lockspace here*/
-	ret = dlm_new_lockspace(mddev->uuid, NULL, DLM_LSFL_FS, 32, 
+	for (i = 0;i < 16;i++) {
+		sprintf(lockspace_nm + i * 2, "%02x", mddev->uuid[i]);
+	}
+	lockspace_nm[32] = '\0';
+        printk(KERN_ERR "New lockspace: uuid = %s\n",lockspace_nm);
+	ret = dlm_new_lockspace(lockspace_nm, NULL, DLM_LSFL_FS, 32, 
 			NULL, NULL, NULL, &mddev->dlm_md_lockspace);
 	if (ret) {
+        	printk(KERN_ERR "New lockspace failed\n");
 		goto recv_failed;
 	}
 	mddev->recv_thread = md_register_thread(raid1_recvd, mddev, "raid1_recvd");
@@ -3261,6 +3270,7 @@ static int run(struct mddev *mddev)
 		printk(KERN_ERR "cannot allocate memory for send_thread!\n");
 		goto recv_failed;
 	}
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	/* prepare all dlm lock resources here except bitmap resources. */
 	mddev->dlm_md_resync = init_lock_resource(mddev, "resync");
 	if (!mddev->dlm_md_resync) 
@@ -3280,9 +3290,15 @@ static int run(struct mddev *mddev)
 	mddev->dlm_md_meta = init_lock_resource(mddev,"cmd-super");
 	if (!mddev->dlm_md_meta)
 		goto meta_failed;
+	mddev->no_new_devs = init_lock_resource(mddev, "no-new-devs");
+	if (!mddev->no_new_devs)
+		goto no_new_devs_failed;
+	mddev->res_uuid = init_lock_resource(mddev, "res_uuid");
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
+	if (!mddev->res_uuid) 
+		goto res_uuid_failed;
 	/* get sync CR lock on ACK. */
 	res = mddev->dlm_md_ack;
-	res->finished = 0;
 	res->mode = DLM_LOCK_CR;
 	res->flags = DLM_LKF_NOQUEUE;
 	res->parent_lkid = 0;
@@ -3291,7 +3307,26 @@ static int run(struct mddev *mddev)
 	if (dlm_lock_sync(mddev->dlm_md_lockspace, res)) {
 		printk(KERN_ERR "failed to get a sync CR lock on ACK!\n");
 	}
+
+	/*get CR lock on no_new_devs*/
+	res = mddev->no_new_devs;
+	res->mode = DLM_LOCK_CR;
+	res->flags = DLM_LKF_NOQUEUE;
+	res->parent_lkid = 0;
+	res->state = 0;
+	res->bast = NULL;
+	ret = dlm_lock_sync(mddev->dlm_md_lockspace, res);
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
+	if (ret) {
+		printk(KERN_ERR "failed to get a sync CR lock on no_new_devs!\n");
+	}
 	return ret;
+res_uuid_failed:
+	deinit_lock_resource(mddev->res_uuid);
+	mddev->res_uuid = NULL;
+no_new_devs_failed:
+	deinit_lock_resource(mddev->no_new_devs);
+	mddev->no_new_devs= NULL;
 meta_failed:
 	deinit_lock_resource(mddev->dlm_md_meta);
 	mddev->dlm_md_meta = NULL;
@@ -3305,7 +3340,6 @@ message_failed:
 	deinit_lock_resource(mddev->dlm_md_resync);
 	mddev->dlm_md_resync = NULL;
 recv_failed:
-	stop(mddev);
 	return ret;
 }
 
@@ -3335,10 +3369,14 @@ static int stop(struct mddev *mddev)
 	deinit_lock_resource(mddev->dlm_md_token);
 	deinit_lock_resource(mddev->dlm_md_ack);
 	deinit_lock_resource(mddev->dlm_md_meta);
+	deinit_lock_resource(mddev->no_new_devs);
+	deinit_lock_resource(mddev->res_uuid);
 	mddev->dlm_md_resync = NULL;
 	mddev->dlm_md_message = NULL;
 	mddev->dlm_md_token = NULL;
 	mddev->dlm_md_ack = NULL;
+	mddev->no_new_devs = NULL;
+	mddev->res_uuid = NULL;
 	dlm_release_lockspace(mddev->dlm_md_lockspace, 0);
 	while (!list_empty(&mddev->dlm_md_bitmap)) {
 		struct dlm_lock_resource *pos;
@@ -3564,8 +3602,5 @@ module_init(raid_init);
 module_exit(raid_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("RAID1 (mirroring) personality for MD");
-MODULE_ALIAS("md-personality-3"); /* RAID1 */
-MODULE_ALIAS("md-raid1");
-MODULE_ALIAS("md-level-1");
 
 module_param(max_queued_requests, int, S_IRUGO|S_IWUSR);
