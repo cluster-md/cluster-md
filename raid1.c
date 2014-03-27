@@ -3270,6 +3270,7 @@ static int run(struct mddev *mddev)
 		printk(KERN_ERR "cannot allocate memory for send_thread!\n");
 		goto recv_failed;
 	}
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	/* prepare all dlm lock resources here except bitmap resources. */
 	mddev->dlm_md_resync = init_lock_resource(mddev, "resync");
 	if (!mddev->dlm_md_resync) 
@@ -3293,6 +3294,7 @@ static int run(struct mddev *mddev)
 	if (!mddev->no_new_devs)
 		goto no_new_devs_failed;
 	mddev->res_uuid = init_lock_resource(mddev, "res_uuid");
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	if (!mddev->res_uuid) 
 		goto res_uuid_failed;
 	/* get sync CR lock on ACK. */
@@ -3308,9 +3310,13 @@ static int run(struct mddev *mddev)
 
 	/*get CR lock on no_new_devs*/
 	res = mddev->no_new_devs;
-	ret = dlm_lock(mddev->dlm_md_lockspace, DLM_LOCK_CR, 
-			&res->lksb,DLM_LKF_NOQUEUE,res->name, 
-			res->namelen,0,NULL,res,NULL);
+	res->mode = DLM_LOCK_CR;
+	res->flags = DLM_LKF_NOQUEUE;
+	res->parent_lkid = 0;
+	res->state = 0;
+	res->bast = NULL;
+	ret = dlm_lock_sync(mddev->dlm_md_lockspace, res);
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	if (ret) {
 		printk(KERN_ERR "failed to get a sync CR lock on no_new_devs!\n");
 	}

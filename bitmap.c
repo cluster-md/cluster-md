@@ -1865,6 +1865,7 @@ int bitmap_create(struct mddev *mddev)
 		vfs_fsync(file, 1);
 	}
 	/* read superblock from bitmap file (this sets mddev->bitmap_info.chunksize) */
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	if (!mddev->bitmap_info.external) {
 		/*
 		 * If 'MD_ARRAY_FIRST_USE' is set, then device-mapper is
@@ -1885,8 +1886,10 @@ int bitmap_create(struct mddev *mddev)
 	if (err)
 		goto error;
 
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	bitmap->daemon_lastrun = jiffies;
 	err = bitmap_resize(bitmap, blocks, mddev->bitmap_info.chunksize, 1);
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	if (err)
 		goto error;
 

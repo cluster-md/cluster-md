@@ -5178,8 +5178,10 @@ int md_run(struct mddev *mddev)
 		err = -EINVAL;
 		mddev->pers->stop(mddev);
 	}
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	if (err == 0 && mddev->pers->sync_request &&
 	    (mddev->bitmap_info.file || mddev->bitmap_info.offset)) {
+		printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 		err = bitmap_create(mddev);
 		if (err) {
 			printk(KERN_ERR "%s: failed to create bitmap (%d)\n",
@@ -5187,6 +5189,7 @@ int md_run(struct mddev *mddev)
 			mddev->pers->stop(mddev);
 		}
 	}
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	if (err) {
 		module_put(mddev->pers->owner);
 		mddev->pers = NULL;
@@ -5203,6 +5206,7 @@ int md_run(struct mddev *mddev)
 	} else if (mddev->ro == 2) /* auto-readonly not meaningful */
 		mddev->ro = 0;
 
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
  	atomic_set(&mddev->writes_pending,0);
 	atomic_set(&mddev->max_corr_read_errors,
 		   MD_DEFAULT_MAX_CORRECTED_READ_ERRORS);
@@ -5233,6 +5237,7 @@ int md_run(struct mddev *mddev)
 		}
 	}
 
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	md_new_event(mddev);
 	sysfs_notify_dirent_safe(mddev->sysfs_state);
 	sysfs_notify_dirent_safe(mddev->sysfs_action);
@@ -5347,9 +5352,11 @@ static int do_md_run(struct mddev *mddev)
 {
 	int err;
 
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	err = md_run(mddev);
 	if (err)
 		goto out;
+	printk(KERN_CRIT "md: %s: %d. \n", __func__, __LINE__);
 	err = bitmap_load(mddev);
 	if (err) {
 		bitmap_destroy(mddev);
